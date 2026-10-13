@@ -3554,10 +3554,7 @@ window.viewBinContents = function(bin) {
 };
 
 document.getElementById("btnCreateBin").onclick = () => {
-  const pass = prompt("Masukkan Password Administrator untuk membuat Bin baru:");
-  if (pass === null) return;
-  if (pass !== BIN_ADMIN_PASSWORD) { toast("Password salah! Akses ditolak.", "bad"); return; }
-
+  
   const newBin = prompt("Masukkan Kode Bin baru (contoh: A-01-01):");
   if (newBin === null) return;
   const code = newBin.trim().toUpperCase();
