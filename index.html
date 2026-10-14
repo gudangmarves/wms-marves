@@ -1568,7 +1568,7 @@ function parseIdDate(dateStr) {
    URL & Token diatur lewat tombol ⚙️ di shell-bar (localStorage, per browser).
    ============================================================ */
 const COL_MASTER = "master"; // nama tabel/sheet master di backend GAS
-const SYNC_TABLES = ["master", "rfidmap", "scanlog", "movementlog", "opname"];
+const SYNC_TABLES = ["master", "rfidmap", "scanlog", "movementlog", "opname", "masterbin", "deactbin"];
 
 // Ambil hanya "https://xxxx.supabase.co" dari teks apa pun yang ditempel (buang /rest/v1/, spasi, dsb.)
 function sbBase_(u){
@@ -1669,7 +1669,7 @@ async function cloudApi(action, payload, signal, opts){
 
 let idb;
 const IDB_NAME = "scan_wms_db";
-const IDB_VERSION = 6; // v6: tambah object store "syncqueue" untuk antrean sinkron ke Supabase
+const IDB_VERSION = 7; // v6: antrean sinkron; v7: daftar Bin (masterbin, deactbin) ikut sinkron antar komputer
 
 function openIDB(){
   return new Promise((resolve, reject)=>{
@@ -1682,6 +1682,8 @@ function openIDB(){
       if(!database.objectStoreNames.contains("opname")) database.createObjectStore("opname", { keyPath: "id" });
       if(!database.objectStoreNames.contains("rfidmap")) database.createObjectStore("rfidmap", { keyPath: "code" });
       if(!database.objectStoreNames.contains("syncqueue")) database.createObjectStore("syncqueue", { keyPath: "qid", autoIncrement: true });
+      if(!database.objectStoreNames.contains("masterbin")) database.createObjectStore("masterbin", { keyPath: "id" });
+      if(!database.objectStoreNames.contains("deactbin")) database.createObjectStore("deactbin", { keyPath: "id" });
     };
     req.onsuccess = (e)=>resolve(e.target.result);
     req.onerror = (e)=>reject(e);
@@ -1773,6 +1775,72 @@ function idbClearLocalOnly_(table){
     tx.objectStore(table).clear();
     tx.oncomplete = ()=>resolve();
   });
+}
+
+/* ============================================================
+   SINKRON DAFTAR BIN (Bin terdaftar & Bin nonaktif)
+   Sebelumnya disimpan hanya di localStorage tiap browser, sehingga komputer lain
+   tidak tahu Bin yang sudah kosong ("Bin Kosong" selalu 0). Sekarang disalin ke
+   tabel cloud masterbin & deactbin lewat jalur sinkron yang sama dengan data lain.
+   ============================================================ */
+function idbGetAllKeys_(table){
+  return new Promise((resolve)=>{
+    try{
+      const req = idb.transaction(table, "readonly").objectStore(table).getAllKeys();
+      req.onsuccess = ()=>resolve(req.result || []);
+      req.onerror = ()=>resolve([]);
+    }catch(e){ resolve([]); }
+  });
+}
+function idbRawPutMany_(table, objs){
+  return new Promise((resolve)=>{
+    if(!objs.length) return resolve();
+    const tx = idb.transaction(table, "readwrite");
+    const st = tx.objectStore(table);
+    objs.forEach(o => st.put(o));
+    tx.oncomplete = tx.onerror = tx.onabort = ()=>resolve();
+  });
+}
+function idbRawDeleteMany_(table, keys){
+  return new Promise((resolve)=>{
+    if(!keys.length) return resolve();
+    const tx = idb.transaction(table, "readwrite");
+    const st = tx.objectStore(table);
+    keys.forEach(k => st.delete(k));
+    tx.oncomplete = tx.onerror = tx.onabort = ()=>resolve();
+  });
+}
+// Bandingkan daftar di layar dengan salinan lokal, lalu kirim selisihnya ke antrean sinkron.
+let binPushChain_ = Promise.resolve();
+function pushBinListDiff_(table, list){
+  const snapshot = Array.from(list || []).map(String);
+  binPushChain_ = binPushChain_.then(async () => {
+    if(!idb) return;
+    const old = new Set((await idbGetAllKeys_(table)).map(String));
+    const now = new Set(snapshot);
+    const add = [...now].filter(x => !old.has(x));
+    const del = [...old].filter(x => !now.has(x));
+    if(add.length){ await idbRawPutMany_(table, add.map(id => ({ id }))); await idbEnqueueSync(table, "put", add, add.map(id => ({ id }))); }
+    if(del.length){ await idbRawDeleteMany_(table, del); await idbEnqueueSync(table, "del", del); }
+  }).catch(e => console.error("Gagal sinkron daftar Bin:", e));
+  return binPushChain_;
+}
+// Setelah data Bin baru datang dari cloud: perbarui daftar di memori & localStorage.
+async function reloadBinListsFromIDB_(){
+  const mb = (await idbGetAllKeys_("masterbin")).map(String);
+  const db = (await idbGetAllKeys_("deactbin")).map(String);
+  masterBins = mb;
+  deactivatedBins = db;
+  localStorage.setItem('masterBins', JSON.stringify(masterBins));
+  localStorage.setItem('deactivatedBins', JSON.stringify(deactivatedBins));
+  try{ refreshBinOverviewStats(); }catch(e){}
+}
+// Sekali per browser: kirim daftar Bin lokal yang sudah ada ke cloud (gabungan, tidak menimpa).
+async function migrateBinListsOnce_(){
+  if(localStorage.getItem("bins_migrated_v1") === "1") return;
+  await pushBinListDiff_("masterbin", masterBins);
+  await pushBinListDiff_("deactbin", deactivatedBins);
+  localStorage.setItem("bins_migrated_v1", "1");
 }
 
 let syncBusy = false;
@@ -1994,12 +2062,12 @@ async function pullAllFromCloud(showToast){
         };
       });
       const res = await cloudApi("pullAll", { cursors, limit: 5000 });
-      let anyMore = false, roundChanged = false, rfidChanged = false;
+      let anyMore = false, roundChanged = false, rfidChanged = false, binsChanged = false;
       for(const t of SYNC_TABLES){
         const r = res.results && res.results[t];
         if(!r) continue;
-        if(r.reset){ await idbClearLocalOnly_(t); roundChanged = true; if(t === "rfidmap") rfidChanged = true; }
-        if(r.rows && r.rows.length){ await idbApplyPulledRows_(t, r.rows); roundChanged = true; if(t === "rfidmap") rfidChanged = true; }
+        if(r.reset){ await idbClearLocalOnly_(t); roundChanged = true; if(t === "rfidmap") rfidChanged = true; if(t === "masterbin" || t === "deactbin") binsChanged = true; }
+        if(r.rows && r.rows.length){ await idbApplyPulledRows_(t, r.rows); roundChanged = true; if(t === "rfidmap") rfidChanged = true; if(t === "masterbin" || t === "deactbin") binsChanged = true; }
         localStorage.setItem("sync_since_" + t, String(r.next));
         localStorage.setItem("sync_epoch_" + t, r.epoch);
         if(r.more) anyMore = true;
@@ -2007,6 +2075,7 @@ async function pullAllFromCloud(showToast){
       // Hanya muat ulang cache & tampilan kalau memang ada data baru. Sebelumnya ini dijalankan di
       // SETIAP siklus (getAll seluruh tabel RFID + render ulang dashboard/grafik), membuat UI berat.
       if(rfidChanged) await primeRfidCache();
+      if(binsChanged) await reloadBinListsFromIDB_();
       if(roundChanged) refreshCurrentTabView();
       if(!anyMore) break; // masih ada halaman lanjutan (data banyak/pertama kali) -> ulangi
     }
@@ -3447,7 +3516,7 @@ async function performAdvSearch(query) {
    ============================================================ */
 const BIN_ADMIN_PASSWORD = ADMIN_PASSWORD;
 let masterBins = JSON.parse(localStorage.getItem('masterBins') || '[]');
-function saveMasterBins() { localStorage.setItem('masterBins', JSON.stringify(masterBins)); }
+function saveMasterBins() { localStorage.setItem('masterBins', JSON.stringify(masterBins)); pushBinListDiff_('masterbin', masterBins); }
 
 async function getBinQtyMap() {
   const allRows = await idbGetAllScans();
@@ -3736,7 +3805,7 @@ document.getElementById("btnExportPivot").onclick = async ()=>{
    7) TAB DATA INDUK (ALL SCAN LOKAL)
    ============================================================ */
 let deactivatedBins = JSON.parse(localStorage.getItem('deactivatedBins') || '[]');
-function saveDeactivatedBins() { localStorage.setItem('deactivatedBins', JSON.stringify(deactivatedBins)); }
+function saveDeactivatedBins() { localStorage.setItem('deactivatedBins', JSON.stringify(deactivatedBins)); pushBinListDiff_('deactbin', deactivatedBins); }
 
 let currentUniqueBins = [];
 async function loadBinManagement() {
@@ -6618,6 +6687,7 @@ btnPrintQR.onclick = () => {
     renderInboundLog();
     await loadOutboundLogFromIDB();
     await primeRfidCache();
+    await migrateBinListsOnce_();
   } catch (e) {
     console.error("Gagal membuka database lokal (IndexedDB):", e);
     toast("Peringatan: Gagal membuka database lokal.", "warning");
