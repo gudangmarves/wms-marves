@@ -2208,7 +2208,13 @@ async function primeRfidCache(){
 
 // Deteksi apakah hasil scan berbentuk QR RFID {"RFID_CODE":"xxxx"} (bukan barcode SKU biasa).
 function extractRfidCode(raw){
-  const m = String(raw || '').match(/\{\s*["']?RFID_CODE["']?\s*:\s*"([^"]+)"\s*\}/i);
+  // Scanner/layout keyboard tertentu mengetik tanda kutip "pintar" (“ ” ‘ ’): samakan dulu jadi kutip biasa.
+  const s = String(raw || '')
+    .replace(/[\u201C\u201D\u201E\u201F\u2033\uFF02]/g, '"')
+    .replace(/[\u2018\u2019\u201B\u2032\uFF07]/g, "'")
+    .replace(/[\u200B-\u200D\uFEFF]/g, '');
+  let m = s.match(/\{\s*["']?RFID_CODE["']?\s*:\s*["']([^"']+)["']\s*\}/i);
+  if(!m) m = s.match(/RFID_CODE\W{0,8}([A-Za-z0-9_-]+)/i); // cadangan: format agak berbeda
   return m ? m[1].trim().toUpperCase() : null;
 }
 
