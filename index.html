@@ -1694,6 +1694,8 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
             <h3 class="card-header">Sinkronisasi Cloud</h3>
             <div class="hint" style="margin-bottom: 16px;">Satu-satunya fitur yang terhubung ke Cloud. Tarik data master produk terbaru dari Google Sheets.</div>
             <button class="btn btn-ghost" style="width:100%" id="btnPullMaster">⬇️ Tarik Master Data Cloud ke Lokal</button>
+            <button class="btn btn-ghost" style="width:100%; margin-top:8px;" id="btnSyncNames" title="Samakan nama produk di Data Induk, log pergerakan, opname, dan pemetaan RFID dengan Master Produk terbaru">🔄 Samakan Nama Produk di Semua Data</button>
+            <div class="hint" style="margin-top:8px;">Nama di Master Produk adalah acuan. Setiap Master diupload/ditarik, nama SKU yang sama di semua data ikut diperbarui otomatis.</div>
           </div>
           
           <div class="card" style="margin: 0;">
@@ -2550,7 +2552,7 @@ function idbApplyPulledRows_(table, rows){
       try{ if(row.d) store.delete(row.k); else store.put(cleanRec_(row.v)); }
       catch(rowErr){ console.warn("Baris hasil tarik dilewati:", table, rowErr); } // satu baris rusak tidak boleh menghentikan semuanya
     });
-    tx.oncomplete = ()=>resolve();
+    tx.oncomplete = ()=>{ resolve(); if(table === "master" && rows.length) scheduleNameReconcile_(4000); };
     // Kalau transaksi gagal, jangan diam-diam lanjut: cursor tidak boleh maju, supaya baris ini ditarik ulang.
     tx.onerror = tx.onabort = ()=>reject(tx.error || new Error("Gagal menulis data hasil tarik ke database lokal"));
   });
@@ -7899,6 +7901,7 @@ document.getElementById("btnUploadMaster").onclick = async ()=>{
     toast(`✓ ${parsedMaster.length} produk tersimpan ke Lokal, sedang disinkron ke Cloud...`, "good");
     flushSyncQueue();
     refreshMasterStats();
+    reconcileNamesWithMaster_({ silent: false }).catch(e => console.warn(e)); // nama baru menimpa nama lama di semua data
   }catch(err){
     console.error(err);
     toast("Gagal mengupload: " + err.message, "bad");
@@ -7913,11 +7916,80 @@ document.getElementById("btnPullMaster").onclick = async ()=>{
     const count = await pullFromCloud("master");
     toast(count > 0 ? `✓ ${count} perubahan produk ditarik dari Cloud` : "✓ Lokal sudah sesuai dengan Cloud (tidak ada perubahan baru)", "good");
     refreshMasterStats();
+    reconcileNamesWithMaster_({ silent: false }).catch(e => console.warn(e));
   }catch(err){
     console.error(err);
     toast("Gagal menarik data: " + err.message, "bad");
   }
 };
+
+/* ===== Penyamaan nama produk: Master Produk = acuan, nama terbaru menimpa nama lama di semua data =====
+   Dijalankan otomatis setelah Master diupload / ditarik dari Cloud / saat aplikasi dibuka, atau manual lewat tombol di tab Master.
+   Yang diperbarui hanya baris yang namanya berbeda: stok & Data Induk (scanlog), log pergerakan, Opname, dan pemetaan RFID. */
+let _nameReconRunning = false, _nameReconTimer = null;
+function scheduleNameReconcile_(ms){
+  clearTimeout(_nameReconTimer);
+  _nameReconTimer = setTimeout(() => { reconcileNamesWithMaster_({ silent: true }).catch(e => console.warn("Penyamaan nama gagal:", e)); }, ms || 3000);
+}
+async function reconcileNamesWithMaster_(opt){
+  opt = opt || {};
+  if(_nameReconRunning || !idb) return null;
+  _nameReconRunning = true;
+  const st = { scan: 0, move: 0, opname: 0, rfid: 0, skus: new Set(), unknown: new Set() };
+  // Kunci SKU dibuat toleran: spasi ganda / spasi non-breaking / huruf besar-kecil dianggap sama
+  const nk = (v) => String(v == null ? "" : v).replace(/[\s\u00a0\u200b]+/g, " ").trim().toUpperCase();
+  try{
+    const mm = new Map();
+    (await idbGetAllMaster()).forEach(p => {
+      const k = nk(p && p.sku);
+      const n = String(p && p.nama != null ? p.nama : "").trim();
+      if(k && n) mm.set(k, n);
+    });
+    if(!mm.size) return st;
+    const fix = (rows) => {
+      const out = [];
+      (rows || []).forEach(r => {
+        if(!r || r.sku == null) return;
+        const k = nk(r.sku);
+        const n = mm.get(k);
+        if(!n && k) st.unknown.add(k);
+        if(n && String(r.nama == null ? "" : r.nama).trim() !== n){
+          r.nama = n;
+          if(r.found === false) r.found = true;
+          st.skus.add(k);
+          out.push(r);
+        }
+      });
+      return out;
+    };
+    const sc = fix(await idbGetAllScans());
+    if(sc.length){ await idbAddScanBulk(sc); st.scan = sc.length; }
+    const mv = fix(await idbGetAllMovements());
+    if(mv.length){ await idbAddMovementBulk(mv); st.move = mv.length; }
+    const op = fix(await idbGetAllOpname());
+    for(const o of op) await idbPutOpname(o);
+    st.opname = op.length;
+    const rf = fix(await idbGetAllRfid());
+    if(rf.length){ await idbPutRfidBulk(rf); st.rfid = rf.length; try{ await primeRfidCache(); }catch(e){} }
+    if(st.scan && allScanCache){ try{ loadAllScan(); }catch(e){} }
+    if(st.scan || st.move || st.opname || st.rfid){
+      try{ flushSyncQueue(); }catch(e){}
+      if(!opt.silent) toast(`✓ Nama disamakan untuk ${st.skus.size} SKU (stok ${st.scan}, log ${st.move}, opname ${st.opname}, RFID ${st.rfid})`, "good");
+    } else if(!opt.silent){
+      toast(st.unknown.size ? `Tidak ada nama yang perlu diubah. ${st.unknown.size} SKU di data tidak ditemukan di Master Produk.` : "✓ Semua nama produk sudah sama dengan Master Produk", st.unknown.size ? "warning" : "good");
+    }
+    return st;
+  } finally { _nameReconRunning = false; }
+}
+document.getElementById("btnSyncNames").onclick = async () => {
+  const b = document.getElementById("btnSyncNames");
+  b.disabled = true;
+  try{ toast("Menyamakan nama produk di semua data...", "warning"); await reconcileNamesWithMaster_({ silent: false }); }
+  catch(err){ console.error(err); toast("Gagal menyamakan nama: " + err.message, "bad"); }
+  finally{ b.disabled = false; }
+};
+
+window.addEventListener("load", () => setTimeout(() => scheduleNameReconcile_(0), 15000)); // cek sekali setelah aplikasi dibuka & sinkron awal selesai
 
 async function refreshMasterStats(){
   let local = 0, cloud = null;
