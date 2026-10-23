@@ -808,21 +808,6 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
             </div>
           </div>
         </div>
-
-        <!-- DOKUMEN MUTASI: pencocokan hasil scan dengan qty dokumen -->
-        <div class="card" id="mutasiCard" style="margin: 0; grid-column: 1 / -1;">
-          <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px;">
-            <h3 class="card-header" style="margin:0; border:0; padding:0; flex:1; min-width:220px;">📄 Dokumen Mutasi (pencocokan scan)</h3>
-            <label class="btn btn-ghost btn-sm" for="mutasiFile" style="cursor:pointer;">⬆ Upload Excel Mutasi</label>
-            <input type="file" id="mutasiFile" accept=".xlsx,.xls,.csv" hidden>
-            <select id="mutasiSel" class="input-sm" style="max-width:260px; margin:0;" title="Pilih No Mutasi. Scan berikutnya otomatis memakai nomor ini sebagai No. Dokumen"></select>
-            <button class="btn btn-ghost btn-sm" id="mutasiExport">⬇ Export</button>
-            <button class="btn btn-danger btn-sm" id="mutasiDel" title="Hapus dokumen ini dari aplikasi">🗑️</button>
-          </div>
-          <div id="mutasiBody">
-            <div class="hint">Belum ada dokumen. Upload Excel mutasi (kolom: Tgl.Mutasi, No Mutasi, PO, SKU, Product Name, Qty). Setelah dokumen dipilih, setiap scan Inbound dicocokkan dengan qty dokumen dan stok tetap masuk lewat RFID yang di-scan.</div>
-          </div>
-        </div>
         </div>
       </section>
 
@@ -3468,180 +3453,15 @@ async function handleScanCore(sku, uid){
     </div>`;
   }
 
-  const mutasiWarn = mutasiScanWarn_(sku, docNoValue, typeValue);
   sessionInboundScans.push({
     id: generateID(), wh: document.getElementById("inWh").value === WH_BESAR ? WH_BESAR : WH_RTS, sku, uid: uid || null, nama: product ? product.nama : null, found: !!product, bin: binValue, docNo: docNoValue || "", ts: new Date().toISOString(), type: typeValue, returChannel: returChannelValue,
     remark: typeValue === "RETUR" ? `Retur Barang (${returChannelValue})` : (typeValue === "REJECT" ? `Retur Reject: ${rejectReasonValue}` : "Scanned IN"),
     isReject: typeValue === "REJECT" || undefined, rejectReason: rejectReasonValue || undefined
   });
 
-  if(mutasiWarn){
-    resultBox.insertAdjacentHTML("beforeend", `<div style="margin-top:6px"><span class="badge warning">⚠ ${escUid_(mutasiWarn)}</span></div>`);
-    toast(mutasiWarn, "warning");
-  }
   renderInboundLog();
   scanInput.focus();
 }
-
-/* ===== DOKUMEN MUTASI: pencocokan scan Inbound dengan qty dokumen =====
-   Dokumen disimpan di browser ini (localStorage). Stok tetap masuk ke Data Induk lewat RFID yang di-scan;
-   dokumen hanya jadi pembanding: Dokumen vs Sudah masuk (sudah eksekusi) + Staging (belum eksekusi). */
-const MUTASI_KEY = "wms_mutasi_docs_v1";
-let mutasiState = { docs: {}, cur: "", onlyOpen: false };
-function mtNk_(v){ return String(v == null ? "" : v).replace(/[\s\u00a0\u200b]+/g, " ").trim().toUpperCase(); }
-function mtSave_(){ try{ localStorage.setItem(MUTASI_KEY, JSON.stringify({ docs: mutasiState.docs, cur: mutasiState.cur })); }catch(e){ console.warn(e); } }
-(function(){ try{ const d = JSON.parse(localStorage.getItem(MUTASI_KEY) || "null"); if(d && d.docs){ mutasiState.docs = d.docs; mutasiState.cur = d.cur || ""; } }catch(e){} })();
-function mtDoc_(no){ const k = mtNk_(no); if(!k) return null; const key = Object.keys(mutasiState.docs).find(x => mtNk_(x) === k); return key ? { key, d: mutasiState.docs[key] } : null; }
-function mtStaged_(key){ const k = mtNk_(key); return sessionInboundScans.filter(r => r.type === "INBOUND" && mtNk_(r.docNo) === k); }
-function mtStatus_(it, staged){
-  const tot = (it.recv || 0) + staged;
-  return tot === 0 ? "idle" : (tot === it.qty ? "ok" : (tot < it.qty ? "low" : "high"));
-}
-const MT_LBL = { idle: ["Belum", "muted"], ok: ["Sesuai", "good"], low: ["Kurang", "bad"], high: ["Lebih", "warning"] };
-
-function mtParse_(rows){
-  let h = -1; const col = {};
-  for(let i = 0; i < Math.min(rows.length, 15); i++){
-    const low = (rows[i] || []).map(c => String(c == null ? "" : c).trim().toLowerCase());
-    if(low.some(c => c.includes("sku")) && low.some(c => c.includes("qty") || c.includes("jumlah"))){
-      h = i;
-      low.forEach((c, j) => {
-        if(c.includes("no mutasi") || c === "no. mutasi") col.no = j;
-        else if(c.includes("tgl") || c.includes("tanggal")) col.tgl = j;
-        else if(c === "po" || c.includes("no po")) col.po = j;
-        else if(c.includes("sku")) col.sku = j;
-        else if(c.includes("product") || c.includes("nama")) col.nama = j;
-        else if(c.includes("qty") || c.includes("jumlah")) col.qty = j;
-      });
-      break;
-    }
-  }
-  if(h < 0 || col.sku == null || col.qty == null) return null;
-  const out = {}; let n = 0;
-  for(let r = h + 1; r < rows.length; r++){
-    const row = rows[r] || [];
-    const sku = String(row[col.sku] == null ? "" : row[col.sku]).trim();
-    const qty = Number(row[col.qty]);
-    if(!sku || !isFinite(qty)) continue;
-    const no = (col.no != null && row[col.no]) ? String(row[col.no]).trim() : "TANPA NO MUTASI";
-    const tgl = col.tgl != null ? (row[col.tgl] instanceof Date ? row[col.tgl].toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" }) : String(row[col.tgl] || "")) : "";
-    const d = out[no] || (out[no] = { po: col.po != null ? String(row[col.po] || "") : "", tgl, items: [], extra: {} });
-    const ex = d.items.find(x => mtNk_(x.sku) === mtNk_(sku));
-    if(ex) ex.qty += qty; else d.items.push({ sku, nama: col.nama != null ? String(row[col.nama] || "") : "", qty, recv: 0 });
-    n++;
-  }
-  return n ? out : null;
-}
-document.getElementById("mutasiFile").addEventListener("change", (e) => {
-  const f = e.target.files[0]; if(!f) return;
-  const rd = new FileReader();
-  rd.onload = (ev) => {
-    try{
-      const wb = XLSX.read(ev.target.result, { type: "array", cellDates: true });
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "", raw: true });
-      const res = mtParse_(rows);
-      if(!res){ toast("Format tidak dikenali. Pastikan ada kolom SKU dan Qty.", "bad"); return; }
-      const keys = Object.keys(res);
-      keys.forEach(no => {
-        const old = mtDoc_(no);
-        if(old){ // upload ulang dokumen yang sama: pertahankan jumlah yang sudah masuk
-          res[no].items.forEach(it => { const o = old.d.items.find(x => mtNk_(x.sku) === mtNk_(it.sku)); if(o) it.recv = o.recv || 0; });
-          res[no].extra = old.d.extra || {};
-          delete mutasiState.docs[old.key];
-        }
-        mutasiState.docs[no] = res[no];
-      });
-      mtSelect_(keys[0]);
-      toast(`✓ ${keys.length} dokumen mutasi dimuat (${res[keys[0]].items.length} SKU)`, "good");
-    }catch(err){ console.error(err); toast("Gagal membaca file mutasi", "bad"); }
-    e.target.value = "";
-  };
-  rd.readAsArrayBuffer(f);
-});
-function mtSelect_(key){
-  mutasiState.cur = key || "";
-  mtSave_();
-  if(key){ docNoInput.value = key.toUpperCase(); } else if(mtDoc_(docNoInput.value)){ docNoInput.value = ""; }
-  renderMutasi_();
-}
-document.getElementById("mutasiSel").addEventListener("change", (e) => mtSelect_(e.target.value));
-docNoInput.addEventListener("input", () => { const m = mtDoc_(docNoInput.value); if(m && m.key !== mutasiState.cur){ mutasiState.cur = m.key; mtSave_(); renderMutasi_(); } });
-
-function renderMutasi_(){
-  const keys = Object.keys(mutasiState.docs);
-  const sel = document.getElementById("mutasiSel");
-  sel.innerHTML = '<option value="">— Tanpa dokumen mutasi —</option>' + keys.map(k => `<option value="${escUid_(k)}"${k === mutasiState.cur ? " selected" : ""}>${escUid_(k)}</option>`).join("");
-  sel.style.display = keys.length ? "" : "none";
-  document.getElementById("mutasiExport").style.display = document.getElementById("mutasiDel").style.display = mutasiState.cur ? "" : "none";
-  const box = document.getElementById("mutasiBody");
-  const m = mtDoc_(mutasiState.cur);
-  if(!m){
-    box.innerHTML = keys.length ? '<div class="hint">Pilih No Mutasi di atas untuk mulai mencocokkan scan.</div>'
-      : '<div class="hint">Belum ada dokumen. Upload Excel mutasi (kolom: Tgl.Mutasi, No Mutasi, PO, SKU, Product Name, Qty). Setelah dokumen dipilih, setiap scan Inbound dicocokkan dengan qty dokumen dan stok tetap masuk lewat RFID yang di-scan.</div>';
-    return;
-  }
-  const staged = mtStaged_(m.key);
-  const stByS = {}; staged.forEach(r => { const k = mtNk_(r.sku); stByS[k] = (stByS[k] || 0) + 1; });
-  let tot = 0, got = 0, stg = 0, ok = 0, low = 0, high = 0;
-  const rows = m.d.items.map(it => {
-    const st = stByS[mtNk_(it.sku)] || 0, s = mtStatus_(it, st);
-    tot += it.qty; got += (it.recv || 0); stg += st;
-    if(s === "ok") ok++; else if(s === "high") high++; else low++;
-    return { it, st, s, diff: (it.recv || 0) + st - it.qty };
-  });
-  const extraStaged = {}; staged.forEach(r => { if(!m.d.items.some(x => mtNk_(x.sku) === mtNk_(r.sku))) extraStaged[r.sku] = (extraStaged[r.sku] || 0) + 1; });
-  const extraAll = Object.assign({}, m.d.extra || {}); Object.keys(extraStaged).forEach(k => { extraAll[k] = (extraAll[k] || 0) + extraStaged[k]; });
-  const pct = tot ? Math.min(100, Math.round((got + stg) / tot * 100)) : 0;
-  const view = rows.filter(r => !mutasiState.onlyOpen || r.s !== "ok");
-  box.innerHTML = `
-    <div style="display:flex; flex-wrap:wrap; gap:6px 14px; font-size:13px; margin-bottom:6px;">
-      <span><b>PO:</b> ${escUid_(m.d.po || "-")}</span><span><b>Tanggal:</b> ${escUid_(m.d.tgl || "-")}</span>
-      <span><b>Dokumen:</b> ${tot}</span><span><b>Sudah masuk:</b> ${got}</span><span><b>Staging:</b> ${stg}</span>
-      <span><b>Selisih:</b> <b class="${got + stg - tot < 0 ? "op-selisih-kurang" : (got + stg - tot > 0 ? "op-selisih-uid" : "op-selisih-ok")}">${got + stg - tot > 0 ? "+" : ""}${got + stg - tot}</b></span>
-      <span class="hint">${ok} SKU sesuai · ${low} belum/kurang · ${high} lebih</span>
-    </div>
-    <div style="height:8px; background:var(--border); border-radius:6px; overflow:hidden; margin-bottom:8px;"><i style="display:block; height:100%; width:${pct}%; background:var(--success);"></i></div>
-    <label class="hint" style="display:flex; gap:6px; align-items:center; margin-bottom:6px; cursor:pointer;"><input type="checkbox" id="mutasiOnlyOpen" ${mutasiState.onlyOpen ? "checked" : ""}> Tampilkan hanya yang belum sesuai</label>
-    <div class="scroll-table" style="max-height:300px;"><table>
-      <thead><tr><th>SKU</th><th>Nama Barang</th><th style="text-align:center;">Dokumen</th><th style="text-align:center;">Sudah Masuk</th><th style="text-align:center;">Staging</th><th style="text-align:center;">Selisih</th><th style="text-align:center;">Status</th></tr></thead>
-      <tbody>${view.length ? view.map(r => `<tr><td style="font-family:var(--font-mono);">${escUid_(r.it.sku)}</td><td>${escUid_(r.it.nama || "")}</td><td style="text-align:center;">${r.it.qty}</td><td style="text-align:center;">${r.it.recv || 0}</td><td style="text-align:center;">${r.st}</td><td style="text-align:center; font-weight:700;">${r.diff > 0 ? "+" : ""}${r.diff}</td><td style="text-align:center;"><span class="badge ${MT_LBL[r.s][1]}">${MT_LBL[r.s][0]}</span></td></tr>`).join("") : '<tr><td colspan="7" class="hint" style="text-align:center;">Semua SKU sudah sesuai ✓</td></tr>'}</tbody>
-    </table></div>
-    ${Object.keys(extraAll).length ? `<div class="hint" style="margin-top:6px; color:var(--warning);">⚠ SKU di luar dokumen: ${Object.keys(extraAll).map(k => escUid_(k) + " (" + extraAll[k] + ")").join(", ")}</div>` : ""}`;
-  const cb = document.getElementById("mutasiOnlyOpen");
-  if(cb) cb.onchange = () => { mutasiState.onlyOpen = cb.checked; renderMutasi_(); };
-}
-// Peringatan saat scan (dipanggil sebelum item dimasukkan ke staging)
-function mutasiScanWarn_(sku, docNo, type){
-  if(type !== "INBOUND") return "";
-  const m = mtDoc_(docNo); if(!m) return "";
-  const it = m.d.items.find(x => mtNk_(x.sku) === mtNk_(sku));
-  if(!it) return `SKU ${sku} tidak ada di dokumen mutasi ${m.key}`;
-  const now = (it.recv || 0) + mtStaged_(m.key).filter(r => mtNk_(r.sku) === mtNk_(sku)).length + 1;
-  return now > it.qty ? `Melebihi qty dokumen: ${now} dari ${it.qty} (${sku})` : "";
-}
-// Dipanggil setiap 1 unit berhasil dieksekusi ke Data Induk
-function mutasiCountOne_(item){
-  if(!item || item.type !== "INBOUND") return;
-  const m = mtDoc_(item.docNo); if(!m) return;
-  const it = m.d.items.find(x => mtNk_(x.sku) === mtNk_(item.sku));
-  if(it) it.recv = (it.recv || 0) + 1; else { m.d.extra = m.d.extra || {}; m.d.extra[item.sku] = (m.d.extra[item.sku] || 0) + 1; }
-}
-document.getElementById("mutasiExport").onclick = () => {
-  const m = mtDoc_(mutasiState.cur); if(!m) return;
-  const st = {}; mtStaged_(m.key).forEach(r => { const k = mtNk_(r.sku); st[k] = (st[k] || 0) + 1; });
-  const rows = m.d.items.map(it => { const s = st[mtNk_(it.sku)] || 0; return { "No Mutasi": m.key, "PO": m.d.po, "SKU": it.sku, "Product Name": it.nama, "Qty Dokumen": it.qty, "Sudah Masuk": it.recv || 0, "Staging": s, "Selisih": (it.recv || 0) + s - it.qty, "Status": MT_LBL[mtStatus_(it, s)][0] }; });
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Pencocokan Mutasi");
-  const ex = Object.keys(m.d.extra || {}).map(k => ({ "SKU di luar dokumen": k, "Jumlah masuk": m.d.extra[k] }));
-  if(ex.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ex), "Di Luar Dokumen");
-  XLSX.writeFile(wb, `Pencocokan_Mutasi_${m.key.replace(/[^\w.-]+/g, "_")}.xlsx`);
-};
-document.getElementById("mutasiDel").onclick = () => {
-  const m = mtDoc_(mutasiState.cur); if(!m) return;
-  if(!confirm(`Hapus dokumen mutasi ${m.key} dari aplikasi? Stok yang sudah masuk ke Data Induk tidak ikut terhapus.`)) return;
-  delete mutasiState.docs[m.key]; mtSelect_("");
-};
-renderMutasi_();
 
 function applyInboundRules_(){
   // Gudang tujuan bisa dipilih bebas (Gudang Besar / Gudang RTS). Tipe hanya mengatur nilai awal.
@@ -3707,11 +3527,9 @@ document.getElementById("btnExecInbound").onclick = async () => {
               entry.rejectBy = curBy_();
           }
           await idbAddScan(entry);
-          mutasiCountOne_(item);
           await recordMovement(entry.id, isRj ? "REJECT" : item.type, item.sku, item.nama || "-", isRj ? ((entry.rejectFrom || "-") + " -> " + item.bin) : item.bin, item.remark, item.docNo, item.uid);
       }
       invalidateUidIndex();
-      mtSave_(); // simpan jumlah "Sudah Masuk" dokumen mutasi
       const count = sessionInboundScans.length - skippedDup;
       sessionInboundScans = [];
       renderInboundLog();
@@ -3730,10 +3548,6 @@ document.getElementById("btnExecInbound").onclick = async () => {
 // Data Induk — karena item yang discan di sini belum tersimpan ke Data Induk sampai operator
 // menekan "🚀 Eksekusi Inbound". Pola ini sama seperti Cycle Count Bin & Transfer Bin.
 function renderInboundLog(){
-  try{ renderMutasi_(); }catch(e){ console.warn(e); }
-  renderInboundLogCore_();
-}
-function renderInboundLogCore_(){
   sessionStats.total = sessionInboundScans.length;
   sessionStats.found = sessionInboundScans.filter(r => r.found).length;
   sessionStats.notfound = sessionInboundScans.filter(r => !r.found).length;
