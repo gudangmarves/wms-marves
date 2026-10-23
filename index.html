@@ -662,7 +662,6 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
         <div class="nav-group-title">Monitoring <span>▼</span></div>
         <div class="nav-group-items">
           <button class="nav-item" id="navSearchTab">🔎 Pencarian Barang</button>
-          <button class="nav-item" id="navPivot">📊 Rekap Pivot Sesi</button>
           <button class="nav-item" id="navMovement">📜 Tracking Movement</button>
           <button class="nav-item" id="navHistoryCCTF">📜 History CC & Transfer</button>
           <button class="nav-item" id="navDiscrepancy">⚖️ Discrepancy</button>
@@ -1207,25 +1206,6 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
             </div>
           </div>
         </div>
-        </div>
-      </section>
-
-      <!-- ============================ TAB: PIVOT (REKAP) ============================ -->
-      <section id="tab-pivot" class="hidden">
-        <div class="card" style="height: 100%; display: flex; flex-direction: column; margin-bottom: 0;">
-          <h3 class="card-header">Rekap Pivot Sesi Aktif</h3>
-          <div class="hint" style="margin-bottom:12px;">Tabel ini hanya menghitung hasil scan yang masih berada di Staging. Setelah Eksekusi Inbound atau Batal &amp; Bersihkan Staging, rekap ini otomatis kosong.</div>
-          <div class="btn-row">
-            <button class="btn btn-accent btn-sm" id="btnExportPivot">⬇️ Export Laporan Pivot (Format Rapi)</button>
-          </div>
-          <div class="scroll-table" style="flex: 1;">
-            <table>
-              <thead><tr><th>Bin</th><th>SKU</th><th>Nama Barang</th><th>Total Qty</th></tr></thead>
-              <tbody id="pivotBody">
-                <tr><td colspan="4" class="hint" style="text-align:center;">Belum ada scan di sesi ini.</td></tr>
-              </tbody>
-            </table>
-          </div>
         </div>
       </section>
 
@@ -3156,7 +3136,6 @@ const tabNames = [
   { id: "opname", nav: "navOpname", tab: "tab-opname" },
   { id: "transferbin", nav: "navTransferBin", tab: "tab-transferbin" },
   { id: "transfergudang", nav: "navTransferGudang", tab: "tab-transfergudang" },
-  { id: "pivot", nav: "navPivot", tab: "tab-pivot" },
   { id: "search", nav: "navSearchTab", tab: "tab-search" },
   { id: "allscan", nav: "navAllScan", tab: "tab-allscan" },
   { id: "bincl", nav: "navBinCL", tab: "tab-bincl" },
@@ -3206,7 +3185,6 @@ function switchTab(activeId) {
   if(activeId === "cyclecount") document.getElementById("ccScanInput").focus();
   if(activeId === "opname") loadOpnameTab();
   if(activeId === "transferbin") document.getElementById("tfScanInput").focus();
-  if(activeId === "pivot") loadPivot();
   if(activeId === "search") {
     document.getElementById("advSearchInput").focus();
     performAdvSearch(document.getElementById("advSearchInput").value);
@@ -3244,7 +3222,6 @@ function refreshCurrentTabView(){
   try{
     switch(currentActiveTab){
       case "opname": loadOpnameTab(); break;
-      case "pivot": loadPivot(); break;
       case "search":
         performAdvSearch(document.getElementById("advSearchInput").value);
         refreshBinOverviewStats();
@@ -3282,7 +3259,6 @@ document.getElementById("navCycleCount").onclick = () => switchTab("cyclecount")
 document.getElementById("navOpname").onclick = () => switchTab("opname");
 document.getElementById("navTransferBin").onclick = () => switchTab("transferbin");
 document.getElementById("navTransferGudang").onclick = () => switchTab("transfergudang");
-document.getElementById("navPivot").onclick = () => switchTab("pivot");
 document.getElementById("navSearchTab").onclick = () => switchTab("search");
 document.getElementById("navAllScan").onclick = () => switchTab("allscan");
 document.getElementById("navBinCL").onclick = () => switchTab("bincl");
@@ -3561,7 +3537,6 @@ document.getElementById("btnExecInbound").onclick = async () => {
       if (scanResult) scanResult.innerHTML = "";
       if(!document.getElementById("tab-search").classList.contains("hidden")) renderBinOverview();
       if(!document.getElementById("tab-allscan").classList.contains("hidden")) loadAllScan();
-      loadPivot();
       toast(`✓ ${count} item Inbound berhasil dieksekusi ke Data Induk` + (skippedDup ? ` (${skippedDup} RFID duplikat dilewati)` : ""), "good");
   } catch (err) {
       console.error(err);
@@ -3708,7 +3683,6 @@ async function executeDeductionCore(sku, bin, typeStr, remark, isSession = false
     toast(`✓ ${typeStr} berhasil memotong 1 stok`, "good");
     if(!document.getElementById("tab-allscan").classList.contains("hidden")) loadAllScan();
     if(!document.getElementById("tab-search").classList.contains("hidden")) performAdvSearch(document.getElementById("advSearchInput").value);
-    if(!document.getElementById("tab-pivot").classList.contains("hidden")) loadPivot();
     return true;
 }
 
@@ -3742,7 +3716,6 @@ document.getElementById("btnClearScan").onclick = ()=>{
   renderInboundLog();
   const scanResult = document.getElementById("scanResult");
   if(scanResult) scanResult.innerHTML = "";
-  loadPivot();
   toast("✓ Staging Inbound dibersihkan", "good");
 };
 
@@ -4463,7 +4436,6 @@ document.getElementById("btnExecTransfer").onclick = async () => {
 
       if (!document.getElementById("tab-allscan").classList.contains("hidden")) loadAllScan();
       if (!document.getElementById("tab-search").classList.contains("hidden")) performAdvSearch(document.getElementById("advSearchInput").value);
-      if (!document.getElementById("tab-pivot").classList.contains("hidden")) loadPivot();
 
       toast(`✓ Transfer Bin berhasil untuk ${successCount} item.`, "good");
   } catch (err) {
@@ -4536,7 +4508,6 @@ document.getElementById("btnAutoTransferBin").onclick = async () => {
 
       if (!document.getElementById("tab-allscan").classList.contains("hidden")) loadAllScan();
       if (!document.getElementById("tab-search").classList.contains("hidden")) renderBinOverview();
-      if (!document.getElementById("tab-pivot").classList.contains("hidden")) loadPivot();
 
       toast(`✓ Transfer Otomatis berhasil: ${totalSku} SKU (${successCount} unit) dari "${fromBin}" ke "${toBin}".`, "good");
   } catch (err) {
@@ -4862,91 +4833,6 @@ window.processTransfer = async function(sku, oldBin) {
     toast(`✓ 1 Item dipindah ke Bin ${finalBin}`, "good");
     performAdvSearch(document.getElementById("advSearchInput").value); 
 }
-
-
-/* ============================================================
-   6) PIVOT LOGIC (Hanya Active Session)
-   ============================================================ */
-async function loadPivot(){
-  try {
-      const inRows = sessionInboundScans.slice(); // hanya data Staging Inbound yang sedang di-scan
-      const pivotMap = {};
-      inRows.forEach(r => {
-        const binVal = r.bin || "-";
-        const key = `${r.sku}_${binVal}`;
-        if(!pivotMap[key]) pivotMap[key] = { bin: binVal, sku: r.sku, nama: r.nama || "Tidak Dikenali", qty: 0 };
-        pivotMap[key].qty += 1;
-      });
-
-      sessionOutboundScans.forEach(r => {
-        const binVal = r.bin || "-";
-        const key = `${r.sku}_${binVal}`;
-        if(!pivotMap[key]) pivotMap[key] = { bin: binVal, sku: r.sku, nama: r.nama || "Tidak Dikenali", qty: 0 };
-        pivotMap[key].qty -= 1;
-      });
-
-      const pivotArray = Object.values(pivotMap).filter(p => p.qty > 0).sort((a,b) => b.qty - a.qty);
-      
-      const tbody = document.getElementById("pivotBody");
-      if(!tbody) return;
-      tbody.innerHTML = "";
-
-      if(pivotArray.length === 0){
-         tbody.innerHTML = `<tr><td colspan="4" class="hint" style="text-align:center; padding: 24px;">Belum ada kalkulasi stok positif di sesi ini.</td></tr>`;
-         return;
-      }
-
-      pivotArray.forEach(p => {
-        const tr = document.createElement("tr");
-        const safeNama = p.nama ? p.nama.replace(/</g, "&lt;").replace(/>/g, "&gt;") : 'N/A';
-        tr.innerHTML = `
-          <td style="color:var(--accent); font-weight:bold;">${p.bin}</td>
-          <td class="sku">
-            ${p.sku} 
-            <button class="btn-copy" onclick="copyToClipboard('${p.sku}')">Salin</button>
-          </td>
-          <td>${safeNama}</td>
-          <td style="font-weight:bold; color:var(--accent); font-size: 16px; background-color: rgba(59, 130, 246, 0.05);">${p.qty}</td>
-        `;
-        tbody.appendChild(tr);
-      });
-  } catch(e) { console.error(e); }
-}
-
-document.getElementById("btnExportPivot").onclick = async ()=>{
-  const inRows = sessionInboundScans.slice(); // hanya data Staging Inbound yang sedang di-scan
-  if(inRows.length === 0 && sessionOutboundScans.length === 0){ toast("Belum ada data di sesi ini", ""); return; }
-
-  const pivotMap = {};
-  inRows.forEach(r => {
-    const binVal = r.bin || "-";
-    const key = `${r.sku}_${binVal}`;
-    if(!pivotMap[key]) pivotMap[key] = { bin: binVal, sku: r.sku, nama: r.nama || "TIDAK DIKENALI", qty: 0 };
-    pivotMap[key].qty += 1;
-  });
-
-  sessionOutboundScans.forEach(r => {
-    const binVal = r.bin || "-";
-    const key = `${r.sku}_${binVal}`;
-    if(!pivotMap[key]) pivotMap[key] = { bin: binVal, sku: r.sku, nama: r.nama || "TIDAK DIKENALI", qty: 0 };
-    pivotMap[key].qty -= 1;
-  });
-
-  const wsData = Object.values(pivotMap).filter(p => p.qty > 0).map(p => ({
-    "Lokasi Bin": p.bin,
-    "SKU": p.sku,
-    "Nama Barang": p.nama,
-    "Total Qty": p.qty
-  }));
-
-  if(wsData.length === 0) { toast("Kalkulasi Qty kosong", "warning"); return; }
-
-  const ws = XLSX.utils.json_to_sheet(wsData);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Rekap Pivot Sesi");
-  XLSX.writeFile(wb, `Laporan_Pivot_Sesi_${Date.now()}.xlsx`);
-  toast("✓ Excel berhasil diunduh", "good");
-};
 
 
 /* ============================================================
@@ -5733,7 +5619,6 @@ async function processDiscrepancyAction(sku, actionType) {
       await loadDiscrepancy();
       if (!document.getElementById("tab-allscan").classList.contains("hidden")) loadAllScan();
       if (!document.getElementById("tab-search").classList.contains("hidden")) performAdvSearch(document.getElementById("advSearchInput").value);
-      if (!document.getElementById("tab-pivot").classList.contains("hidden")) loadPivot();
   } catch (err) {
       console.error(err);
       toast("Gagal memproses aksi revisi.", "bad");
@@ -8405,7 +8290,6 @@ function planOutboundBulk_(items, stockRows, codeOf){
     };
     toast(`✓ Outbound massal: ${done} unit dipotong`, "good");
     if(!document.getElementById("tab-allscan").classList.contains("hidden")) loadAllScan();
-    if(!document.getElementById("tab-pivot").classList.contains("hidden")) loadPivot();
   }
 })();
 
