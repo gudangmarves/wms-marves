@@ -771,9 +771,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
               <select id="inboundType" class="input-sm" style="margin-bottom: 12px; font-weight: bold; color: var(--accent);">
                  <option value="INBOUND">Tipe: BARANG BARU (INBOUND)</option>
                  <option value="RETUR">Tipe: BARANG KEMBALI (RETUR)</option>
-                 <option value="REJECT">Tipe: RETUR REJECT (barang keluar, masuk sebagai reject)</option>
               </select>
-              <input id="rejectReasonInput" class="input-sm hidden" type="text" placeholder="Alasan reject (mis. cacat jahitan, rusak)" autocomplete="off" style="margin-bottom: 10px; font-weight: bold; color: var(--danger);">
               <select id="returChannel" class="input-sm hidden" style="margin-bottom: 10px; font-weight: bold; color: var(--warning);">
                  <option value="LIVE">Channel Retur: LIVE</option>
                  <option value="METRO">Channel Retur: METRO</option>
@@ -782,7 +780,11 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
               <div style="display: flex; gap: 10px; margin-bottom: 10px;">
                 <select id="inWh" class="input-sm" title="Gudang tujuan barang masuk" style="margin-bottom: 0; flex: 0 0 150px;"><option value="RTS">Gudang RTS</option><option value="BESAR">Gudang Besar</option></select>
                 <input id="binInput" class="bin-input input-sm" type="text" placeholder="Lokasi Bin (Opsional)" autocomplete="off" style="margin-bottom: 0; flex: 1;">
-                <input id="docNoInput" class="input-sm" type="text" placeholder="No. Dokumen Inbound" autocomplete="off" style="flex: 1;">
+              </div>
+              <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                <input id="docNoInput" class="input-sm" type="text" placeholder="No. Dokumen / No. Mutasi" autocomplete="off" style="margin-bottom: 0; flex: 1;">
+                <input id="poInput" class="input-sm" type="text" placeholder="No. PO" autocomplete="off" title="Nomor PO untuk barang yang di-scan. Terisi otomatis kalau Dokumen Mutasi dipilih." style="margin-bottom: 0; flex: 1;">
+                <button class="btn btn-ghost btn-sm" id="btnPoClear" type="button" title="Kosongkan No. PO" style="flex: 0 0 auto;">✕ PO</button>
               </div>
               <input id="scanInput" class="scan-input" type="text" placeholder="Tembak barcode SKU / RFID..." autocomplete="off" autofocus>
               <div class="hint" style="margin-top:10px;">Item masuk ke Staging dulu (belum tersimpan ke Data Induk). Klik "🚀 Eksekusi Inbound" untuk menyimpan semuanya sekaligus. Pilih gudang tujuan: <b>Gudang Besar</b> (Bin wajib berawalan <b>GB-</b>) atau <b>Gudang RTS</b> (Bin tidak boleh berawalan <b>GB-</b>). Barang baru default ke Gudang Besar, retur default ke Gudang RTS.</div>
@@ -806,6 +808,21 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
                 </table>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- DOKUMEN MUTASI: pencocokan hasil scan dengan qty dokumen -->
+        <div class="card" id="mutasiCard" style="margin: 0; grid-column: 1 / -1;">
+          <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px;">
+            <h3 class="card-header" style="margin:0; border:0; padding:0; flex:1; min-width:220px;">📄 Dokumen Mutasi (pencocokan scan)</h3>
+            <label class="btn btn-ghost btn-sm" for="mutasiFile" style="cursor:pointer;">⬆ Upload Excel Mutasi</label>
+            <input type="file" id="mutasiFile" accept=".xlsx,.xls,.csv" hidden>
+            <select id="mutasiSel" class="input-sm" style="max-width:260px; margin:0;" title="Pilih No Mutasi. Scan berikutnya otomatis memakai nomor ini sebagai No. Dokumen"></select>
+            <button class="btn btn-ghost btn-sm" id="mutasiExport">⬇ Export</button>
+            <button class="btn btn-danger btn-sm" id="mutasiDel" title="Hapus dokumen ini dari aplikasi">🗑️</button>
+          </div>
+          <div id="mutasiBody">
+            <div class="hint">Belum ada dokumen. Upload Excel mutasi (kolom: Tgl.Mutasi, No Mutasi, PO, SKU, Product Name, Qty). Setelah dokumen dipilih, setiap scan Inbound dicocokkan dengan qty dokumen dan stok tetap masuk lewat RFID yang di-scan.</div>
           </div>
         </div>
         </div>
@@ -1571,6 +1588,18 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
              </div>
           </div>
 
+          <!-- ===== Rekap Inbound per PO ===== -->
+          <h3 class="card-header" style="margin: 8px 0 10px;">📦 Rekap Inbound per PO</h3>
+          <div class="card" style="margin: 0 0 16px;">
+             <div class="scroll-table" style="max-height: 380px;">
+               <table>
+                 <thead><tr><th>Model</th><th>PO</th><th style="text-align:center;">Qty Reject</th><th style="text-align:center;">Qty Inbound</th><th style="text-align:center;">Qty PO</th><th style="text-align:center;">Selisih</th><th style="text-align:center;">%</th></tr></thead>
+                 <tbody id="dashPoBody"><tr><td colspan="7" class="hint" style="text-align:center;">Memuat...</td></tr></tbody>
+               </table>
+             </div>
+             <div class="hint" style="margin-top:8px;"><b>Qty PO</b> dari Dokumen Mutasi yang diupload di Inbound. <b>Qty Inbound</b> = barang yang dieksekusi dengan No. PO terisi. <b>Qty Reject</b> = unit di Data Bin Reject yang membawa PO tersebut. Selisih = Inbound − PO. Model diambil dari nama barang.</div>
+          </div>
+
           <!-- ===== Stock Opname Harian ===== -->
           <h3 class="card-header" style="margin: 8px 0 10px;">📋 Stock Opname Harian</h3>
           <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px;">
@@ -1645,9 +1674,9 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
 
           <div class="scroll-table fill rj-table">
             <table>
-              <thead><tr><th>Bin / Karung Reject</th><th>Bin Asal</th><th>SKU</th><th>Nama Barang</th><th style="text-align:center;">Qty</th><th>Alasan</th><th>Dipindah</th><th>Oleh</th><th style="text-align:center;">Aksi</th></tr></thead>
+              <thead><tr><th>Bin / Karung Reject</th><th>Bin Asal</th><th>SKU</th><th>Nama Barang</th><th>RFID / UID</th><th style="text-align:center;">Qty</th><th>Alasan</th><th>Dipindah</th><th>Oleh</th><th style="text-align:center;">Aksi</th></tr></thead>
               <tbody id="rjBody">
-                <tr><td colspan="9" class="hint" style="text-align:center;">Memuat data...</td></tr>
+                <tr><td colspan="10" class="hint" style="text-align:center;">Memuat data...</td></tr>
               </tbody>
             </table>
           </div>
@@ -2070,7 +2099,7 @@ function isAdminPw_(p){ return typeof p === "string" && ADMIN_PASSWORD_HASHES.in
    jadi tanda kutip, backslash, <, > dan karakter kontrol dibuang dari field identitas. Field teks bebas
    (nama, remark) hanya dinetralkan agar isinya tetap terbaca. */
 const STRICT_FIELDS_ = ["sku","bin","uid","code","docNo","by","ref_id","fromBin","toBin","returChannel","rejectFrom","rejectBy","wh"];
-const SOFT_FIELDS_ = ["nama","remark","rejectReason"];
+const SOFT_FIELDS_ = ["nama","remark","rejectReason","po"];
 
 /* ---- DUA GUDANG: Gudang RTS (boleh langsung outbound) dan Gudang Besar (hanya lewat Transfer Gudang) ----
    Setiap baris stok punya field "wh". Baris lama tanpa field ini dianggap Gudang RTS. */
@@ -3280,6 +3309,9 @@ let sessionStats = { total:0, found:0, notfound:0 };
 const scanInput = document.getElementById("scanInput");
 const binInput = document.getElementById("binInput");
 const docNoInput = document.getElementById("docNoInput");
+const poInput = document.getElementById("poInput");
+document.getElementById("btnPoClear").onclick = () => { poInput.value = ""; poInput.focus(); };
+poInput.addEventListener("input", () => { const c = poInput.selectionStart; poInput.value = poInput.value.toUpperCase(); try{ poInput.setSelectionRange(c, c); }catch(e){} });
 const inboundType = document.getElementById("inboundType");
 
 // Saat tipe diganti ke RETUR, No. Dokumen otomatis diisi awalan "R" sebagai penanda barang retur.
@@ -3371,19 +3403,6 @@ async function handleScan(sku, uid){
 }
 
 async function handleScanCore(sku, uid){
-  if(inboundType.value === "REJECT"){
-    if(!normRejectBin_(binInput.value)){
-      document.getElementById("scanResult").innerHTML = `<div class="result notfound">
-        <div class="sku">${escUid_(sku)}</div>
-        <div class="nama">Retur Reject wajib diisi Bin / Karung Reject (contoh: KARUNG-01 menjadi RJ-KARUNG-01).</div>
-        <div style="margin-top:4px"><span class="badge bad">⛔ BIN REJECT KOSONG — DITOLAK</span></div>
-      </div>`;
-      toast("Isi Bin / Karung Reject dahulu untuk Retur Reject.", "bad");
-      binInput.focus();
-      return;
-    }
-    binInput.value = normRejectBin_(binInput.value);
-  }
   if(document.getElementById("inWh").value !== WH_BESAR && isGBBin_(binInput.value)){
     document.getElementById("scanResult").innerHTML = `<div class="result notfound">
       <div class="sku">${escUid_(sku)}</div>
@@ -3433,45 +3452,208 @@ async function handleScanCore(sku, uid){
 
   if(product && product.sku) sku = product.sku; // samakan dengan tulisan SKU di Master (huruf besar/kecil)
   const binValue = binInput.value.trim().toUpperCase() || "-";
-  const rejectReasonValue = inboundType.value === "REJECT" ? ((document.getElementById("rejectReasonInput").value || "").trim() || "Tidak disebutkan") : "";
   const docNoValue = docNoInput.value.trim().toUpperCase();
+  const poValue = poInput.value.trim().toUpperCase();
   const typeValue = inboundType.value; 
   const returChannelValue = typeValue === "RETUR" ? document.getElementById("returChannel").value : "";
   const resultBox = document.getElementById("scanResult");
   
   if(product){
     resultBox.innerHTML = `<div class="result found">
-      <div class="sku"><span class="badge muted">BIN: ${binValue}</span>${docNoValue ? ` <span class="badge transfer">DOK: ${docNoValue}</span>` : ""} ${sku}</div>
+      <div class="sku"><span class="badge muted">BIN: ${binValue}</span>${docNoValue ? ` <span class="badge transfer">DOK: ${docNoValue}</span>` : ""}${poValue ? ` <span class="badge warning">PO: ${escUid_(poValue)}</span>` : ""} ${sku}</div>
       <div class="nama">${product.nama}</div>
       <div style="margin-top:4px"><span class="badge good">STAGED (${typeValue}${returChannelValue ? " " + returChannelValue : ""}) — BELUM EKSEKUSI</span></div>
     </div>`;
   }else{
     resultBox.innerHTML = `<div class="result notfound">
-      <div class="sku"><span class="badge muted">BIN: ${binValue}</span>${docNoValue ? ` <span class="badge transfer">DOK: ${docNoValue}</span>` : ""} ${sku}</div>
+      <div class="sku"><span class="badge muted">BIN: ${binValue}</span>${docNoValue ? ` <span class="badge transfer">DOK: ${docNoValue}</span>` : ""}${poValue ? ` <span class="badge warning">PO: ${escUid_(poValue)}</span>` : ""} ${sku}</div>
       <div class="nama">SKU tidak ditemukan di database Master</div>
       <div style="margin-top:4px"><span class="badge bad">⚠ TIDAK DIKENALI (tetap distaging)</span></div>
     </div>`;
   }
 
+  const mutasiWarn = mutasiScanWarn_(sku, docNoValue, typeValue);
   sessionInboundScans.push({
     id: generateID(), wh: document.getElementById("inWh").value === WH_BESAR ? WH_BESAR : WH_RTS, sku, uid: uid || null, nama: product ? product.nama : null, found: !!product, bin: binValue, docNo: docNoValue || "", ts: new Date().toISOString(), type: typeValue, returChannel: returChannelValue,
-    remark: typeValue === "RETUR" ? `Retur Barang (${returChannelValue})` : (typeValue === "REJECT" ? `Retur Reject: ${rejectReasonValue}` : "Scanned IN"),
-    isReject: typeValue === "REJECT" || undefined, rejectReason: rejectReasonValue || undefined
+    remark: (typeValue === "RETUR" ? `Retur Barang (${returChannelValue})` : "Scanned IN") + (poValue ? ` | PO ${poValue}` : ""),
+    po: poValue || undefined
   });
 
+  if(mutasiWarn){
+    resultBox.insertAdjacentHTML("beforeend", `<div style="margin-top:6px"><span class="badge warning">⚠ ${escUid_(mutasiWarn)}</span></div>`);
+    toast(mutasiWarn, "warning");
+  }
   renderInboundLog();
   scanInput.focus();
 }
+
+/* ===== DOKUMEN MUTASI: pencocokan scan Inbound dengan qty dokumen =====
+   Dokumen disimpan di browser ini (localStorage). Stok tetap masuk ke Data Induk lewat RFID yang di-scan;
+   dokumen hanya jadi pembanding: Dokumen vs Sudah masuk (sudah eksekusi) + Staging (belum eksekusi). */
+const MUTASI_KEY = "wms_mutasi_docs_v1";
+let mutasiState = { docs: {}, cur: "", onlyOpen: false };
+function mtNk_(v){ return String(v == null ? "" : v).replace(/[\s\u00a0\u200b]+/g, " ").trim().toUpperCase(); }
+function mtSave_(){ try{ localStorage.setItem(MUTASI_KEY, JSON.stringify({ docs: mutasiState.docs, cur: mutasiState.cur })); }catch(e){ console.warn(e); } }
+(function(){ try{ const d = JSON.parse(localStorage.getItem(MUTASI_KEY) || "null"); if(d && d.docs){ mutasiState.docs = d.docs; mutasiState.cur = d.cur || ""; } }catch(e){} })();
+function mtDoc_(no){ const k = mtNk_(no); if(!k) return null; const key = Object.keys(mutasiState.docs).find(x => mtNk_(x) === k); return key ? { key, d: mutasiState.docs[key] } : null; }
+function mtStaged_(key){ const k = mtNk_(key); return sessionInboundScans.filter(r => r.type === "INBOUND" && mtNk_(r.docNo) === k); }
+function mtStatus_(it, staged){
+  const tot = (it.recv || 0) + staged;
+  return tot === 0 ? "idle" : (tot === it.qty ? "ok" : (tot < it.qty ? "low" : "high"));
+}
+const MT_LBL = { idle: ["Belum", "muted"], ok: ["Sesuai", "good"], low: ["Kurang", "bad"], high: ["Lebih", "warning"] };
+
+function mtParse_(rows){
+  let h = -1; const col = {};
+  for(let i = 0; i < Math.min(rows.length, 15); i++){
+    const low = (rows[i] || []).map(c => String(c == null ? "" : c).trim().toLowerCase());
+    if(low.some(c => c.includes("sku")) && low.some(c => c.includes("qty") || c.includes("jumlah"))){
+      h = i;
+      low.forEach((c, j) => {
+        if(c.includes("no mutasi") || c === "no. mutasi") col.no = j;
+        else if(c.includes("tgl") || c.includes("tanggal")) col.tgl = j;
+        else if(c === "po" || c.includes("no po")) col.po = j;
+        else if(c.includes("sku")) col.sku = j;
+        else if(c.includes("product") || c.includes("nama")) col.nama = j;
+        else if(c.includes("qty") || c.includes("jumlah")) col.qty = j;
+      });
+      break;
+    }
+  }
+  if(h < 0 || col.sku == null || col.qty == null) return null;
+  const out = {}; let n = 0;
+  for(let r = h + 1; r < rows.length; r++){
+    const row = rows[r] || [];
+    const sku = String(row[col.sku] == null ? "" : row[col.sku]).trim();
+    const qty = Number(row[col.qty]);
+    if(!sku || !isFinite(qty)) continue;
+    const no = (col.no != null && row[col.no]) ? String(row[col.no]).trim() : "TANPA NO MUTASI";
+    const tgl = col.tgl != null ? (row[col.tgl] instanceof Date ? row[col.tgl].toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" }) : String(row[col.tgl] || "")) : "";
+    const d = out[no] || (out[no] = { po: col.po != null ? String(row[col.po] || "") : "", tgl, items: [], extra: {} });
+    const ex = d.items.find(x => mtNk_(x.sku) === mtNk_(sku));
+    if(ex) ex.qty += qty; else d.items.push({ sku, nama: col.nama != null ? String(row[col.nama] || "") : "", qty, recv: 0 });
+    n++;
+  }
+  return n ? out : null;
+}
+document.getElementById("mutasiFile").addEventListener("change", (e) => {
+  const f = e.target.files[0]; if(!f) return;
+  const rd = new FileReader();
+  rd.onload = (ev) => {
+    try{
+      const wb = XLSX.read(ev.target.result, { type: "array", cellDates: true });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "", raw: true });
+      const res = mtParse_(rows);
+      if(!res){ toast("Format tidak dikenali. Pastikan ada kolom SKU dan Qty.", "bad"); return; }
+      const keys = Object.keys(res);
+      keys.forEach(no => {
+        const old = mtDoc_(no);
+        if(old){ // upload ulang dokumen yang sama: pertahankan jumlah yang sudah masuk
+          res[no].items.forEach(it => { const o = old.d.items.find(x => mtNk_(x.sku) === mtNk_(it.sku)); if(o) it.recv = o.recv || 0; });
+          res[no].extra = old.d.extra || {};
+          delete mutasiState.docs[old.key];
+        }
+        mutasiState.docs[no] = res[no];
+      });
+      mtSelect_(keys[0]);
+      toast(`✓ ${keys.length} dokumen mutasi dimuat (${res[keys[0]].items.length} SKU)`, "good");
+    }catch(err){ console.error(err); toast("Gagal membaca file mutasi", "bad"); }
+    e.target.value = "";
+  };
+  rd.readAsArrayBuffer(f);
+});
+function mtSelect_(key){
+  mutasiState.cur = key || "";
+  mtSave_();
+  const dd = key ? mutasiState.docs[key] : null;
+  if(key){ docNoInput.value = key.toUpperCase(); if(dd && dd.po) poInput.value = String(dd.po).toUpperCase(); }
+  else if(mtDoc_(docNoInput.value)){ docNoInput.value = ""; poInput.value = ""; }
+  renderMutasi_();
+}
+document.getElementById("mutasiSel").addEventListener("change", (e) => mtSelect_(e.target.value));
+docNoInput.addEventListener("input", () => { const m = mtDoc_(docNoInput.value); if(m && m.key !== mutasiState.cur){ mutasiState.cur = m.key; mtSave_(); renderMutasi_(); } });
+
+function renderMutasi_(){
+  const keys = Object.keys(mutasiState.docs);
+  const sel = document.getElementById("mutasiSel");
+  sel.innerHTML = '<option value="">— Tanpa dokumen mutasi —</option>' + keys.map(k => `<option value="${escUid_(k)}"${k === mutasiState.cur ? " selected" : ""}>${escUid_(k)}</option>`).join("");
+  sel.style.display = keys.length ? "" : "none";
+  document.getElementById("mutasiExport").style.display = document.getElementById("mutasiDel").style.display = mutasiState.cur ? "" : "none";
+  const box = document.getElementById("mutasiBody");
+  const m = mtDoc_(mutasiState.cur);
+  if(!m){
+    box.innerHTML = keys.length ? '<div class="hint">Pilih No Mutasi di atas untuk mulai mencocokkan scan.</div>'
+      : '<div class="hint">Belum ada dokumen. Upload Excel mutasi (kolom: Tgl.Mutasi, No Mutasi, PO, SKU, Product Name, Qty). Setelah dokumen dipilih, setiap scan Inbound dicocokkan dengan qty dokumen dan stok tetap masuk lewat RFID yang di-scan.</div>';
+    return;
+  }
+  const staged = mtStaged_(m.key);
+  const stByS = {}; staged.forEach(r => { const k = mtNk_(r.sku); stByS[k] = (stByS[k] || 0) + 1; });
+  let tot = 0, got = 0, stg = 0, ok = 0, low = 0, high = 0;
+  const rows = m.d.items.map(it => {
+    const st = stByS[mtNk_(it.sku)] || 0, s = mtStatus_(it, st);
+    tot += it.qty; got += (it.recv || 0); stg += st;
+    if(s === "ok") ok++; else if(s === "high") high++; else low++;
+    return { it, st, s, diff: (it.recv || 0) + st - it.qty };
+  });
+  const extraStaged = {}; staged.forEach(r => { if(!m.d.items.some(x => mtNk_(x.sku) === mtNk_(r.sku))) extraStaged[r.sku] = (extraStaged[r.sku] || 0) + 1; });
+  const extraAll = Object.assign({}, m.d.extra || {}); Object.keys(extraStaged).forEach(k => { extraAll[k] = (extraAll[k] || 0) + extraStaged[k]; });
+  const pct = tot ? Math.min(100, Math.round((got + stg) / tot * 100)) : 0;
+  const view = rows.filter(r => !mutasiState.onlyOpen || r.s !== "ok");
+  box.innerHTML = `
+    <div style="display:flex; flex-wrap:wrap; gap:6px 14px; font-size:13px; margin-bottom:6px;">
+      <span><b>PO:</b> ${escUid_(m.d.po || "-")}</span><span><b>Tanggal:</b> ${escUid_(m.d.tgl || "-")}</span>
+      <span><b>Dokumen:</b> ${tot}</span><span><b>Sudah masuk:</b> ${got}</span><span><b>Staging:</b> ${stg}</span>
+      <span><b>Selisih:</b> <b class="${got + stg - tot < 0 ? "op-selisih-kurang" : (got + stg - tot > 0 ? "op-selisih-uid" : "op-selisih-ok")}">${got + stg - tot > 0 ? "+" : ""}${got + stg - tot}</b></span>
+      <span class="hint">${ok} SKU sesuai · ${low} belum/kurang · ${high} lebih</span>
+    </div>
+    <div style="height:8px; background:var(--border); border-radius:6px; overflow:hidden; margin-bottom:8px;"><i style="display:block; height:100%; width:${pct}%; background:var(--success);"></i></div>
+    <label class="hint" style="display:flex; gap:6px; align-items:center; margin-bottom:6px; cursor:pointer;"><input type="checkbox" id="mutasiOnlyOpen" ${mutasiState.onlyOpen ? "checked" : ""}> Tampilkan hanya yang belum sesuai</label>
+    <div class="scroll-table" style="max-height:300px;"><table>
+      <thead><tr><th>SKU</th><th>Nama Barang</th><th style="text-align:center;">Dokumen</th><th style="text-align:center;">Sudah Masuk</th><th style="text-align:center;">Staging</th><th style="text-align:center;">Selisih</th><th style="text-align:center;">Status</th></tr></thead>
+      <tbody>${view.length ? view.map(r => `<tr><td style="font-family:var(--font-mono);">${escUid_(r.it.sku)}</td><td>${escUid_(r.it.nama || "")}</td><td style="text-align:center;">${r.it.qty}</td><td style="text-align:center;">${r.it.recv || 0}</td><td style="text-align:center;">${r.st}</td><td style="text-align:center; font-weight:700;">${r.diff > 0 ? "+" : ""}${r.diff}</td><td style="text-align:center;"><span class="badge ${MT_LBL[r.s][1]}">${MT_LBL[r.s][0]}</span></td></tr>`).join("") : '<tr><td colspan="7" class="hint" style="text-align:center;">Semua SKU sudah sesuai ✓</td></tr>'}</tbody>
+    </table></div>
+    ${Object.keys(extraAll).length ? `<div class="hint" style="margin-top:6px; color:var(--warning);">⚠ SKU di luar dokumen: ${Object.keys(extraAll).map(k => escUid_(k) + " (" + extraAll[k] + ")").join(", ")}</div>` : ""}`;
+  const cb = document.getElementById("mutasiOnlyOpen");
+  if(cb) cb.onchange = () => { mutasiState.onlyOpen = cb.checked; renderMutasi_(); };
+}
+// Peringatan saat scan (dipanggil sebelum item dimasukkan ke staging)
+function mutasiScanWarn_(sku, docNo, type){
+  if(type !== "INBOUND") return "";
+  const m = mtDoc_(docNo); if(!m) return "";
+  const it = m.d.items.find(x => mtNk_(x.sku) === mtNk_(sku));
+  if(!it) return `SKU ${sku} tidak ada di dokumen mutasi ${m.key}`;
+  const now = (it.recv || 0) + mtStaged_(m.key).filter(r => mtNk_(r.sku) === mtNk_(sku)).length + 1;
+  return now > it.qty ? `Melebihi qty dokumen: ${now} dari ${it.qty} (${sku})` : "";
+}
+// Dipanggil setiap 1 unit berhasil dieksekusi ke Data Induk
+function mutasiCountOne_(item){
+  if(!item || item.type !== "INBOUND") return;
+  const m = mtDoc_(item.docNo); if(!m) return;
+  const it = m.d.items.find(x => mtNk_(x.sku) === mtNk_(item.sku));
+  if(it) it.recv = (it.recv || 0) + 1; else { m.d.extra = m.d.extra || {}; m.d.extra[item.sku] = (m.d.extra[item.sku] || 0) + 1; }
+}
+document.getElementById("mutasiExport").onclick = () => {
+  const m = mtDoc_(mutasiState.cur); if(!m) return;
+  const st = {}; mtStaged_(m.key).forEach(r => { const k = mtNk_(r.sku); st[k] = (st[k] || 0) + 1; });
+  const rows = m.d.items.map(it => { const s = st[mtNk_(it.sku)] || 0; return { "No Mutasi": m.key, "PO": m.d.po, "SKU": it.sku, "Product Name": it.nama, "Qty Dokumen": it.qty, "Sudah Masuk": it.recv || 0, "Staging": s, "Selisih": (it.recv || 0) + s - it.qty, "Status": MT_LBL[mtStatus_(it, s)][0] }; });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Pencocokan Mutasi");
+  const ex = Object.keys(m.d.extra || {}).map(k => ({ "SKU di luar dokumen": k, "Jumlah masuk": m.d.extra[k] }));
+  if(ex.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ex), "Di Luar Dokumen");
+  XLSX.writeFile(wb, `Pencocokan_Mutasi_${m.key.replace(/[^\w.-]+/g, "_")}.xlsx`);
+};
+document.getElementById("mutasiDel").onclick = () => {
+  const m = mtDoc_(mutasiState.cur); if(!m) return;
+  if(!confirm(`Hapus dokumen mutasi ${m.key} dari aplikasi? Stok yang sudah masuk ke Data Induk tidak ikut terhapus.`)) return;
+  delete mutasiState.docs[m.key]; mtSelect_("");
+};
+renderMutasi_();
 
 function applyInboundRules_(){
   // Gudang tujuan bisa dipilih bebas (Gudang Besar / Gudang RTS). Tipe hanya mengatur nilai awal.
   const wh = document.getElementById("inWh"), isIn = inboundType.value === "INBOUND";
   wh.value = isIn ? WH_BESAR : WH_RTS;
   wh.disabled = false;
-  const isRj = inboundType.value === "REJECT";
-  if (isRj) { wh.value = WH_RTS; wh.disabled = true; } // Retur Reject selalu ke Bin Reject (RJ-) di sisi RTS
-  const rjReasonEl = document.getElementById("rejectReasonInput");
-  if (rjReasonEl) rjReasonEl.classList.toggle("hidden", !isRj);
   wh.classList.toggle("wh-besar", wh.value === WH_BESAR);
   updateInboundBinHint_();
 }
@@ -3484,8 +3666,7 @@ binInput.addEventListener("input", () => {
 });
 function updateInboundBinHint_(){
   const wh = document.getElementById("inWh");
-  binInput.placeholder = inboundType.value === "REJECT" ? "Bin / Karung Reject (Wajib, otomatis awalan RJ-)"
-    : (wh.value === WH_BESAR ? "Bin Gudang Besar (Wajib, awalan GB-)" : "Lokasi Bin (Opsional)");
+  binInput.placeholder = wh.value === WH_BESAR ? "Bin Gudang Besar (Wajib, awalan GB-)" : "Lokasi Bin (Opsional)";
 }
 (function(){
   const el = document.getElementById("inWh");
@@ -3504,32 +3685,19 @@ document.getElementById("btnExecInbound").onclick = async () => {
       invalidateUidIndex();
       const uidIdx = await getUidIndex();
       let skippedDup = 0;
-      // Retur Reject: cari Bin asal terakhir unit (dari log OUTBOUND/SALES) supaya bisa ditelusuri
-      const lastOutBin = new Map();
-      if (sessionInboundScans.some(x => x.type === "REJECT" && x.uid)) {
-          const mv = (await idbGetAllMovements()).filter(m => m && m.uid && (m.type === "OUTBOUND" || m.type === "SALES"));
-          mv.sort((a, b) => String(a.ts || '').localeCompare(String(b.ts || '')));
-          mv.forEach(m => lastOutBin.set(normUid_(m.uid), String(m.bin || '-').toUpperCase()));
-      }
       for (const item of sessionInboundScans) {
           if (item.uid) {
               const U = normUid_(item.uid);
               if (uidIdx.has(U)) { skippedDup++; continue; } // UID sudah masuk stok (mis. dari perangkat lain)
               uidIdx.set(U, item);
           }
-          const isRj = item.type === "REJECT";
-          const entry = { id: item.id, sku: item.sku, uid: item.uid || null, nama: item.nama, found: item.found, bin: item.bin, docNo: item.docNo, ts: item.ts, sessionActive: true, type: isRj ? "RETUR" : item.type, returChannel: item.returChannel, remark: item.remark, wh: isRj ? WH_RTS : (item.wh === WH_BESAR ? WH_BESAR : WH_RTS) };
-          if (isRj) {
-              entry.isReject = true;
-              entry.rejectFrom = (item.uid && lastOutBin.get(normUid_(item.uid))) || "-";
-              entry.rejectReason = item.rejectReason || "Tidak disebutkan";
-              entry.rejectAt = new Date().toISOString();
-              entry.rejectBy = curBy_();
-          }
+          const entry = { id: item.id, sku: item.sku, uid: item.uid || null, nama: item.nama, found: item.found, bin: item.bin, docNo: item.docNo, ts: item.ts, sessionActive: true, type: item.type, returChannel: item.returChannel, remark: item.remark, po: item.po || undefined, wh: item.wh === WH_BESAR ? WH_BESAR : WH_RTS };
           await idbAddScan(entry);
-          await recordMovement(entry.id, isRj ? "REJECT" : item.type, item.sku, item.nama || "-", isRj ? ((entry.rejectFrom || "-") + " -> " + item.bin) : item.bin, item.remark, item.docNo, item.uid);
+          mutasiCountOne_(item);
+          await recordMovement(entry.id, item.type, item.sku, item.nama || "-", item.bin, item.remark, item.docNo, item.uid);
       }
       invalidateUidIndex();
+      mtSave_(); // simpan jumlah "Sudah Masuk" dokumen mutasi
       const count = sessionInboundScans.length - skippedDup;
       sessionInboundScans = [];
       renderInboundLog();
@@ -3548,6 +3716,10 @@ document.getElementById("btnExecInbound").onclick = async () => {
 // Data Induk — karena item yang discan di sini belum tersimpan ke Data Induk sampai operator
 // menekan "🚀 Eksekusi Inbound". Pola ini sama seperti Cycle Count Bin & Transfer Bin.
 function renderInboundLog(){
+  try{ renderMutasi_(); }catch(e){ console.warn(e); }
+  renderInboundLogCore_();
+}
+function renderInboundLogCore_(){
   sessionStats.total = sessionInboundScans.length;
   sessionStats.found = sessionInboundScans.filter(r => r.found).length;
   sessionStats.notfound = sessionInboundScans.filter(r => !r.found).length;
@@ -3569,7 +3741,7 @@ function renderInboundLog(){
     const tr = document.createElement("tr");
     const jam = r.ts ? new Date(r.ts).toLocaleTimeString("id-ID") : "-";
     tr.innerHTML = `
-      <td>${jam} <span class="badge ${(r.type==='RETUR'||r.type==='REJECT')?'warning':'good'}">${r.type}</span></td>
+      <td>${jam} <span class="badge ${r.type==='RETUR'?'warning':'good'}">${r.type}</span></td>
       <td><span style="color:var(--accent); font-weight:bold;">${r.bin || '-'}</span>${r.docNo ? `<br><span style="font-size:10px; color:var(--text-muted);">DOK: ${r.docNo}</span>` : ''}</td>
       <td class="sku">${r.sku}${r.uid ? `<br><span style="font-size:10px; color:var(--text-muted);">RFID: ${escUid_(r.uid)}</span>` : ''}</td>
       <td>${r.found ? r.nama : '<span class="badge bad">N/A</span>'}</td>
@@ -5175,8 +5347,9 @@ async function loadBinReject(){
       const bin = r.bin || '-', sku = r.sku || '-', from = r.rejectFrom || '-', reason = r.rejectReason || '-';
       const key = [bin, sku, from, reason].join("\u0001");
       let g = groups.get(key);
-      if(!g){ g = { bin, sku, nama: r.nama || 'N/A', from, reason, qty: 0, last: "", by: "" }; groups.set(key, g); }
+      if(!g){ g = { bin, sku, nama: r.nama || 'N/A', from, reason, qty: 0, last: "", by: "", units: [] }; groups.set(key, g); }
       g.qty++;
+      g.units.push({ id: r.id, uid: r.uid || null });
       const at = r.rejectAt || r.ts || "";
       if(at >= g.last){ g.last = at; g.by = r.rejectBy || ""; }
     });
@@ -5184,14 +5357,30 @@ async function loadBinReject(){
     renderRejectTable_();
   } catch(err){
     console.error(err);
-    tbody.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; color:red;">Gagal memuat data reject: ' + escUid_(err.message) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; color:red;">Gagal memuat data reject: ' + escUid_(err.message) + '</td></tr>';
   }
 }
 
+function uidCell_(g){
+  const can = isAdminNow_() && g.from !== '-';
+  const chips = (g.units || []).map(u =>
+    '<span class="op-uid" style="margin:2px 4px 2px 0;">' + (u.uid ? escUid_(u.uid) : '(tanpa RFID)') +
+    (can ? ' <button class="btn btn-ghost btn-sm" style="padding:0 6px; margin-left:4px;" data-rj-restore-uid="' + escUid_(u.id) + '" title="Kembalikan HANYA ' + (u.uid ? escUid_(u.uid) : 'unit ini') + ' ke Bin ' + escUid_(g.from) + '">↩</button>' : '') +
+    '</span>').join('');
+  return '<div style="max-height:84px; overflow:auto;">' + (chips || '<span class="hint">-</span>') + '</div>';
+}
+async function restoreRejectRow_(row){
+  const to = row.rejectFrom, fromBin = row.bin;
+  REJECT_FIELDS_.forEach(k => { delete row[k]; });
+  row.bin = to;
+  await putScanRow_(row);
+  await recordMovement(row.id, "REJECT_RESTORE", row.sku, row.nama || "", fromBin + " -> " + to, "Kembalikan dari Reject");
+}
 function filteredReject_(){
   const q = (document.getElementById("rjSearch").value || "").toLowerCase().trim();
   return !q ? rejectViewList : rejectViewList.filter(g =>
-    [g.sku, g.bin, g.from, g.reason, g.nama].some(v => String(v).toLowerCase().includes(q)));
+    [g.sku, g.bin, g.from, g.reason, g.nama].some(v => String(v).toLowerCase().includes(q)) ||
+    (g.units || []).some(u => u.uid && String(u.uid).toLowerCase().includes(q)));
 }
 
 function renderRejectTable_(){
@@ -5201,20 +5390,39 @@ function renderRejectTable_(){
   document.getElementById("rjStatBins").textContent = new Set(list.map(g => g.bin)).size;
   document.getElementById("rjStatSku").textContent = new Set(list.map(g => g.sku)).size;
   if(!list.length){
-    tbody.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; padding: 24px;">' +
+    tbody.innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding: 24px;">' +
       (rejectViewList.length ? 'Tidak ada baris yang cocok dengan pencarian.' : 'Belum ada barang reject. Isi Bin Asal, Bin / Karung Reject, dan Alasan, lalu scan barangnya.') + '</td></tr>';
     return;
   }
   const LIMIT = 500;
   tbody.innerHTML = list.slice(0, LIMIT).map((g, i) =>
     '<tr><td style="color:var(--danger); font-weight:bold;">' + escUid_(g.bin) + '</td><td>' + escUid_(g.from) + '</td><td class="sku">' + escUid_(g.sku) +
-    '</td><td>' + escUid_(g.nama) + '</td><td style="text-align:center; font-weight:bold;">' + g.qty + '</td><td>' + escUid_(g.reason) +
+    '</td><td>' + escUid_(g.nama) + '</td><td>' + uidCell_(g) + '</td><td style="text-align:center; font-weight:bold;">' + g.qty + '</td><td>' + escUid_(g.reason) +
     '</td><td>' + (g.last ? new Date(g.last).toLocaleString("id-ID") : '-') + '</td><td>' + (g.by ? escUid_(g.by) : '<span class="hint">-</span>') +
-    '</td><td style="text-align:center;">' + ((g.from !== '-' && isAdminNow_()) ? '<button class="btn btn-ghost btn-sm" data-rj-restore="' + i + '" title="Kembalikan semua unit ke bin asal (khusus Admin)">↩ Kembalikan</button>' : '<span class="hint">-</span>') + '</td></tr>').join("") +
-    (list.length > LIMIT ? '<tr><td colspan="9" class="hint" style="text-align:center;">Menampilkan ' + LIMIT + ' dari ' + list.length + ' baris. Gunakan pencarian atau Export CSV.</td></tr>' : "");
+    '</td><td style="text-align:center;">' + ((g.from !== '-' && isAdminNow_()) ? '<button class="btn btn-ghost btn-sm" data-rj-restore="' + i + '" title="Kembalikan SEMUA unit di baris ini ke bin asal (khusus Admin)">' + (g.qty > 1 ? '↩ Semua' : '↩ Kembalikan') + '</button>' : '<span class="hint">-</span>') + '</td></tr>').join("") +
+    (list.length > LIMIT ? '<tr><td colspan="10" class="hint" style="text-align:center;">Menampilkan ' + LIMIT + ' dari ' + list.length + ' baris. Gunakan pencarian atau Export CSV.</td></tr>' : "");
 }
 
 document.getElementById("rjBody").addEventListener("click", async (e) => {
+  const ub = e.target.closest("[data-rj-restore-uid]");
+  if(ub){
+    if(!isAdminNow_()){ toast("Hanya Admin yang bisa mengembalikan barang dari Reject.", "bad"); return; }
+    const id = ub.getAttribute("data-rj-restore-uid");
+    ub.disabled = true;
+    try {
+      const row = (await idbGetAllScans()).find(r => r && r.id === id && r.type !== 'OUT' && isRejectRow_(r));
+      if(!row){ toast("Unit tidak ditemukan di Data Bin Reject.", "warning"); }
+      else if(!row.rejectFrom || row.rejectFrom === '-'){ toast("Bin asal unit ini tidak diketahui, tidak bisa dikembalikan otomatis.", "bad"); }
+      else if(confirm("Kembalikan HANYA " + (row.uid ? "RFID " + row.uid : "unit ini") + " (SKU " + row.sku + ") dari " + row.bin + " ke Bin Asal " + row.rejectFrom + "?\n\nUnit lain di baris yang sama tetap di Reject.")){
+        const to = row.rejectFrom;
+        await restoreRejectRow_(row);
+        invalidateUidIndex();
+        toast("✓ " + (row.uid || row.sku) + " dikembalikan ke Bin " + to + ".", "good");
+      }
+    } catch(err){ console.error(err); toast("Gagal mengembalikan dari reject.", "bad"); }
+    await loadBinReject();
+    return;
+  }
   const btn = e.target.closest("[data-rj-restore]");
   if(!btn) return;
   if(!isAdminNow_()){ toast("Hanya Admin yang bisa mengembalikan barang dari Reject.", "bad"); return; }
@@ -5246,8 +5454,8 @@ document.getElementById("rjSearch").addEventListener("input", () => renderReject
 document.getElementById("rjExport").onclick = () => {
   const list = filteredReject_();
   if(!list.length){ toast("Tidak ada data reject untuk diekspor.", "warning"); return; }
-  const lines = [["Bin Reject","Bin Asal","SKU","Nama Barang","Qty","Alasan","Dipindah","Oleh"].map(csvCell_).join(",")];
-  list.forEach(g => lines.push([csvCell_(g.bin), csvCell_(g.from), csvCell_(g.sku), csvCell_(g.nama), g.qty, csvCell_(g.reason), csvCell_(g.last), csvCell_(g.by)].join(",")));
+  const lines = [["Bin Reject","Bin Asal","SKU","Nama Barang","RFID/UID","Qty","Alasan","Dipindah","Oleh"].map(csvCell_).join(",")];
+  list.forEach(g => lines.push([csvCell_(g.bin), csvCell_(g.from), csvCell_(g.sku), csvCell_(g.nama), csvCell_((g.units || []).map(u => u.uid || "-").join(" ")), g.qty, csvCell_(g.reason), csvCell_(g.last), csvCell_(g.by)].join(",")));
   const d = new Date(), p = n => String(n).padStart(2, "0");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" }));
@@ -6831,6 +7039,53 @@ document.getElementById("fileDashLogo").addEventListener("change", async (e) => 
 document.getElementById("btnPrintDashboard").onclick = () => exportDashboardReportExcel();
 document.getElementById("btnRefreshDashboard").onclick = () => loadDashboardReport();
 
+/* ---- Rekap Inbound per PO (Model x PO) ---- */
+const PO_MODEL_STOP_ = new Set(["SET","SHIRT","GAMIS","DRESS","KIDS","DAD","MOM","GIRL","BOY","BABY","MAN","WOMAN","LADIES","PANTS","SKIRT","JACKET","VEST","TUNIK","BLOUSE","JUMPSUIT","OUTER","KEMEJA","KAOS","HIJAB","COUPLE","FAMILY","FOR"]);
+function poModelOf_(nama){
+  const w = String(nama || "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  if(!w.length) return "(Tanpa nama)";
+  let last = -1;
+  w.forEach((x, i) => { if(PO_MODEL_STOP_.has(x.toUpperCase().replace(/[^A-Z]/g, ""))) last = i; });
+  let part;
+  if(last >= 1) part = w.slice(0, last + 1);
+  else { // tidak ada kata jenis/penanda: buang ukuran di belakang, lalu 1 kata warna bila nama cukup panjang
+    part = w.slice();
+    if(/^(\d+|XXS|XS|S|M|L|XL|XXL|XXXL|\d+[YT])$/i.test(part[part.length - 1]) && part.length > 1) part.pop();
+    if(part.length >= 3) part.pop();
+  }
+  return part.map(x => x.charAt(0).toUpperCase() + x.slice(1).toLowerCase()).join(" ");
+}
+function computePoRecap_(moves, scans){
+  const map = new Map();
+  const get = (po, model) => { const k = po + "||" + model; let o = map.get(k); if(!o){ o = { po, model, reject: 0, inbound: 0, qtyPo: 0 }; map.set(k, o); } return o; };
+  const poOf = (remark) => { const m = String(remark || "").match(/\|\s*PO\s+(.+?)\s*$/i); return m ? m[1].trim().toUpperCase() : ""; };
+  (moves || []).forEach(m => { if(m && m.type === "INBOUND"){ const po = poOf(m.remark); if(po) get(po, poModelOf_(m.nama)).inbound++; } });
+  (scans || []).forEach(r => { if(r && r.type !== "OUT" && r.po && isRejectRow_(r)) get(String(r.po).trim().toUpperCase(), poModelOf_(r.nama)).reject++; });
+  try{
+    Object.keys(mutasiState.docs).forEach(no => {
+      const d = mutasiState.docs[no]; const po = String(d.po || "").trim().toUpperCase(); if(!po) return;
+      (d.items || []).forEach(it => { get(po, poModelOf_(it.nama)).qtyPo += Number(it.qty) || 0; });
+    });
+  }catch(e){}
+  return [...map.values()].sort((a, b) => a.po.localeCompare(b.po) || a.model.localeCompare(b.model)).map(o => ({
+    model: o.model, po: o.po, reject: o.reject, inbound: o.inbound, qtyPo: o.qtyPo,
+    selisih: o.qtyPo ? o.inbound - o.qtyPo : null, pct: o.qtyPo ? Math.round(o.inbound / o.qtyPo * 1000) / 10 : null
+  }));
+}
+function renderPoRecap_(rows){
+  const tb = document.getElementById("dashPoBody"); if(!tb) return;
+  if(!rows.length){ tb.innerHTML = '<tr><td colspan="7" class="hint" style="text-align:center;">Belum ada data PO. Isi No. PO saat Inbound dan/atau upload Dokumen Mutasi.</td></tr>'; return; }
+  let tr = 0, ti = 0, tp = 0;
+  const html = rows.map(r => {
+    tr += r.reject; ti += r.inbound; tp += r.qtyPo;
+    const cs = r.selisih === null ? "hint" : (r.selisih < 0 ? "op-selisih-kurang" : (r.selisih > 0 ? "op-selisih-uid" : "op-selisih-ok"));
+    const cp = r.pct === null ? "hint" : (r.pct >= 100 ? "op-selisih-ok" : (r.pct >= 50 ? "op-selisih-uid" : "op-selisih-kurang"));
+    return `<tr><td>${escUid_(r.model)}</td><td style="font-family:var(--font-mono);">${escUid_(r.po)}</td><td style="text-align:center;">${r.reject}</td><td style="text-align:center;">${r.inbound}</td><td style="text-align:center;">${r.qtyPo || "-"}</td><td style="text-align:center; font-weight:700;" class="${cs}">${r.selisih === null ? "-" : r.selisih}</td><td style="text-align:center; font-weight:700;" class="${cp}">${r.pct === null ? "-" : r.pct.toFixed(1) + "%"}</td></tr>`;
+  }).join("");
+  const tsel = tp ? ti - tp : null, tpct = tp ? Math.round(ti / tp * 1000) / 10 : null;
+  tb.innerHTML = html + `<tr style="font-weight:800; background:var(--bg-input);"><td colspan="2">TOTAL</td><td style="text-align:center;">${tr}</td><td style="text-align:center;">${ti}</td><td style="text-align:center;">${tp || "-"}</td><td style="text-align:center;">${tsel === null ? "-" : tsel}</td><td style="text-align:center;">${tpct === null ? "-" : tpct.toFixed(1) + "%"}</td></tr>`;
+}
+
 async function loadDashboardReport() {
   document.getElementById("dashGeneratedAt").textContent = "Dibuat: " + new Date().toLocaleString("id-ID");
   renderDashLogo();
@@ -7016,9 +7271,13 @@ async function loadDashboardReport() {
           }
       }, [maQtyValuePlugin]);
 
+      const poRecap = computePoRecap_(validMoves, allScansRaw);
+      renderPoRecap_(poRecap);
+
       // Simpan snapshot data untuk tombol Export Excel
       dashReportCache = {
           generatedAt: new Date(),
+          poRecap,
           kpi: { totalSku, totalQty, binsUsed: binsUsed.size, inbound30, outbound30, emptyBinCount, deadCount, diffCount },
           topSkus: topSkus.map(([sku, info]) => ({ sku, nama: info.nama || 'TIDAK DIKENALI', qty: info.qty })),
           catCounts,
@@ -7061,6 +7320,8 @@ function exportDashboardReportExcel() {
   const catLabelMap = { "FAST MOVING": "Fast Moving", "SLOW MOVING": "Slow Moving", "DEAD STOCK": "Dead Stock", "BARU / BELUM TERJUAL": "Baru / Belum Terjual", "RESTOCK BARU": "Restock Baru" };
   const wsCat = XLSX.utils.json_to_sheet(Object.keys(catLabelMap).map(k => ({ "Kategori": catLabelMap[k], "Jumlah SKU": d.catCounts[k] || 0 })));
   XLSX.utils.book_append_sheet(wb, wsCat, "Kategori Stok");
+
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.poRecap || []).map(x => ({ "Model": x.model, "PO": x.po, "Qty Reject": x.reject, "Qty Inbound": x.inbound, "Qty PO": x.qtyPo, "Selisih": x.selisih === null ? "-" : x.selisih, "%": x.pct === null ? "-" : x.pct + "%" }))), "Rekap PO");
 
   const wsRak = XLSX.utils.json_to_sheet(d.rak.map(x => ({ "Rak": x.rak, "Qty": x.qty })));
   XLSX.utils.book_append_sheet(wb, wsRak, "Distribusi per Rak");
