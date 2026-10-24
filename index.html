@@ -787,7 +787,6 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
               <div style="display: flex; gap: 10px; margin-bottom: 10px;">
                 <input id="docNoInput" class="input-sm" type="text" placeholder="No. Dokumen / No. Mutasi" autocomplete="off" style="margin-bottom: 0; flex: 1;">
                 <input id="poInput" class="input-sm" type="text" placeholder="No. PO" autocomplete="off" title="Nomor PO untuk barang yang di-scan. Terisi otomatis kalau Dokumen Mutasi dipilih." style="margin-bottom: 0; flex: 1;">
-                <button class="btn btn-ghost btn-sm" id="btnPoClear" type="button" title="Kosongkan No. PO" style="flex: 0 0 auto;">✕ PO</button>
               </div>
               <input id="scanInput" class="scan-input" type="text" placeholder="Tembak barcode SKU / RFID..." autocomplete="off" autofocus>
               <div class="hint" style="margin-top:10px;">Item masuk ke Staging dulu (belum tersimpan ke Data Induk). Klik "🚀 Eksekusi Inbound" untuk menyimpan semuanya sekaligus. Pilih gudang tujuan: <b>Gudang Besar</b> (Bin wajib berawalan <b>GB-</b>) atau <b>Gudang RTS</b> (Bin tidak boleh berawalan <b>GB-</b>). Barang baru default ke Gudang Besar, retur default ke Gudang RTS.</div>
@@ -1259,7 +1258,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
           </div>
           <div class="scroll-table" style="max-height: 420px;">
             <table>
-              <thead><tr><th>Model</th><th>PO</th><th style="text-align:center;">Qty Reject</th><th style="text-align:center;">Qty Inbound</th><th style="text-align:center;">Total Datang</th><th style="text-align:center;">Qty PO</th><th style="text-align:center;">Selisih</th><th style="text-align:center;">%</th><th style="text-align:center;">Status</th><th style="text-align:center;">Aksi</th></tr></thead>
+              <thead><tr><th>Model</th><th>PO</th><th style="text-align:center;">Qty Reject</th><th style="text-align:center;">Qty Inbound</th><th style="text-align:center;">Total Datang</th><th style="text-align:center;">Qty PO</th><th style="text-align:center;">Selisih</th><th style="text-align:center;">%</th><th style="text-align:center;">Status</th><th id="poAksiTh" style="text-align:center;">Aksi</th></tr></thead>
               <tbody id="poRecapBody"><tr><td colspan="10" class="hint" style="text-align:center;">Memuat...</td></tr></tbody>
             </table>
           </div>
@@ -3343,7 +3342,6 @@ const scanInput = document.getElementById("scanInput");
 const binInput = document.getElementById("binInput");
 const docNoInput = document.getElementById("docNoInput");
 const poInput = document.getElementById("poInput");
-document.getElementById("btnPoClear").onclick = () => { poInput.value = ""; poInput.focus(); };
 poInput.addEventListener("input", () => { const c = poInput.selectionStart; poInput.value = poInput.value.toUpperCase(); try{ poInput.setSelectionRange(c, c); }catch(e){} });
 const inboundType = document.getElementById("inboundType");
 
@@ -7158,6 +7156,8 @@ function poStatus_(r){
 }
 function renderPoRecap_(rows){
   const tb = document.getElementById("poRecapBody"); if(!tb) return;
+  const adm = isAdminNow_();
+  const aksiTh = document.getElementById("poAksiTh"); if(aksiTh) aksiTh.style.display = adm ? "" : "none";
   const q = poNk_(document.getElementById("poFilter").value);
   const list = q ? rows.filter(r => poNk_(r.po).includes(q) || poNk_(r.model).includes(q)) : rows;
   if(!list.length){ tb.innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding:20px;">' + (rows.length ? "Tidak ada baris yang cocok." : "Belum ada data. Input PO asli di atas, dan isi No. PO saat Inbound.") + '</td></tr>'; return; }
@@ -7167,10 +7167,10 @@ function renderPoRecap_(rows){
     const cs = r.selisih === null ? "hint" : (r.selisih < 0 ? "op-selisih-kurang" : (r.selisih > 0 ? "op-selisih-uid" : "op-selisih-ok"));
     const cp = r.pct === null ? "hint" : (r.pct >= 100 ? "op-selisih-ok" : (r.pct >= 50 ? "op-selisih-uid" : "op-selisih-kurang"));
     const st = poStatus_(r);
-    return `<tr><td>${escUid_(r.model)}</td><td style="font-family:var(--font-mono);">${escUid_(r.po)}</td><td style="text-align:center;">${r.reject}</td><td style="text-align:center;">${r.inbound}</td><td style="text-align:center; font-weight:700;">${r.datang}</td><td style="text-align:center;">${r.qtyPo === null ? "-" : r.qtyPo}</td><td style="text-align:center; font-weight:700;" class="${cs}">${r.selisih === null ? "-" : r.selisih}</td><td style="text-align:center; font-weight:700;" class="${cp}">${r.pct === null ? "-" : r.pct.toFixed(1) + "%"}</td><td style="text-align:center;"><span class="badge ${st[1]}">${st[0]}</span></td><td style="text-align:center; white-space:nowrap;">${r.qtyPo !== null ? `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-edit="${escUid_(r.po)}||${escUid_(r.model)}" title="Edit PO asli baris ini">✏️</button> <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-del="${escUid_(r.po)}||${escUid_(r.model)}" title="Hapus PO asli baris ini (data Inbound tidak terhapus)">✕</button>` : `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-fix="${escUid_(r.po)}||${escUid_(r.model)}" title="Koreksi / lepas No. PO yang salah pada data Inbound (stok tidak berubah, khusus Admin)">🧹</button>`}</td></tr>`;
+    return `<tr><td>${escUid_(r.model)}</td><td style="font-family:var(--font-mono);">${escUid_(r.po)}</td><td style="text-align:center;">${r.reject}</td><td style="text-align:center;">${r.inbound}</td><td style="text-align:center; font-weight:700;">${r.datang}</td><td style="text-align:center;">${r.qtyPo === null ? "-" : r.qtyPo}</td><td style="text-align:center; font-weight:700;" class="${cs}">${r.selisih === null ? "-" : r.selisih}</td><td style="text-align:center; font-weight:700;" class="${cp}">${r.pct === null ? "-" : r.pct.toFixed(1) + "%"}</td><td style="text-align:center;"><span class="badge ${st[1]}">${st[0]}</span></td><td style="text-align:center; white-space:nowrap;${adm ? "" : " display:none;"}">${r.qtyPo !== null ? `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-edit="${escUid_(r.po)}||${escUid_(r.model)}" title="Edit PO asli baris ini">✏️</button> <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-del="${escUid_(r.po)}||${escUid_(r.model)}" title="Hapus PO asli baris ini (data Inbound tidak terhapus)">✕</button>` : `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-fix="${escUid_(r.po)}||${escUid_(r.model)}" title="Koreksi / lepas No. PO yang salah pada data Inbound (stok tidak berubah, khusus Admin)">🧹</button>`}</td></tr>`;
   }).join("");
   const tsel = tp ? tdPo - tp : null, tpct = tp ? Math.round(tdPo / tp * 1000) / 10 : null;
-  tb.innerHTML = html + `<tr style="font-weight:800; background:var(--bg-input);"><td colspan="2">TOTAL</td><td style="text-align:center;">${tr}</td><td style="text-align:center;">${ti}</td><td style="text-align:center;">${td}</td><td style="text-align:center;">${tp || "-"}</td><td style="text-align:center;">${tsel === null ? "-" : tsel}</td><td style="text-align:center;">${tpct === null ? "-" : tpct.toFixed(1) + "%"}</td><td></td><td></td></tr>`;
+  tb.innerHTML = html + `<tr style="font-weight:800; background:var(--bg-input);"><td colspan="2">TOTAL</td><td style="text-align:center;">${tr}</td><td style="text-align:center;">${ti}</td><td style="text-align:center;">${td}</td><td style="text-align:center;">${tp || "-"}</td><td style="text-align:center;">${tsel === null ? "-" : tsel}</td><td style="text-align:center;">${tpct === null ? "-" : tpct.toFixed(1) + "%"}</td><td></td>${adm ? "<td></td>" : ""}</tr>`;
 }
 async function loadPoInbound(){
   const tb = document.getElementById("poRecapBody");
@@ -7275,6 +7275,7 @@ async function poFixWrongPo_(po, model){
   loadPoInbound();
 }
 document.getElementById("poRecapBody").addEventListener("click", (e) => {
+  if(!isAdminNow_()){ if(e.target.closest("[data-po-fix],[data-po-edit],[data-po-del]")) toast("Aksi ini hanya bisa diproses oleh Admin.", "bad"); return; }
   const fb = e.target.closest("[data-po-fix]");
   if(fb){ const [fpo, fmodel] = fb.getAttribute("data-po-fix").split("||"); poFixWrongPo_(fpo, fmodel); return; }
   const eb = e.target.closest("[data-po-edit]");
