@@ -1244,7 +1244,6 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
           <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
             <label class="btn btn-ghost btn-sm" for="poFile" style="cursor:pointer;">⬆ Upload Excel PO</label>
             <input type="file" id="poFile" accept=".xlsx,.xls,.csv" hidden>
-            <button class="btn btn-ghost btn-sm" id="poTemplate">⬇ Template Excel</button>
             <span class="hint">Kolom: <b>PO</b>, <b>Model</b> (atau Product Name), <b>Qty</b>. PO + Model yang sama akan diganti nilainya, bukan dijumlah dua kali.</span>
           </div>
         </div>
@@ -1258,11 +1257,11 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
           </div>
           <div class="scroll-table" style="max-height: 420px;">
             <table>
-              <thead><tr><th>Model</th><th>PO</th><th style="text-align:center;">Qty Reject</th><th style="text-align:center;">Qty Inbound</th><th style="text-align:center;">Total Datang</th><th style="text-align:center;">Qty PO</th><th style="text-align:center;">Selisih</th><th style="text-align:center;">%</th><th style="text-align:center;">Status</th><th id="poAksiTh" style="text-align:center;">Aksi</th></tr></thead>
-              <tbody id="poRecapBody"><tr><td colspan="10" class="hint" style="text-align:center;">Memuat...</td></tr></tbody>
+              <thead><tr><th>Model</th><th>PO</th><th style="text-align:center;">Qty Reject</th><th style="text-align:center;">Qty Inbound</th><th style="text-align:center;">Qty PO</th><th style="text-align:center;">Selisih</th><th style="text-align:center;">%</th><th style="text-align:center;">Status</th><th id="poAksiTh" style="text-align:center;">Aksi</th></tr></thead>
+              <tbody id="poRecapBody"><tr><td colspan="9" class="hint" style="text-align:center;">Memuat...</td></tr></tbody>
             </table>
           </div>
-          <div class="hint" style="margin-top:8px;"><b>Qty PO</b> dari PO asli yang Anda input di atas. <b>Qty Inbound</b> = barang yang dieksekusi di Inbound dengan No. PO terisi. <b>Qty Reject</b> = unit di Data Bin Reject yang membawa PO tersebut. <b>Total Datang</b> = Qty Inbound + barang reject yang diterima lewat Inbound (Tipe: BARANG REJECT) dengan No. PO yang sama. Selisih dan % dihitung dari Total Datang − Qty PO. Model diambil dari nama barang.</div>
+          <div class="hint" style="margin-top:8px;"><b>Qty PO</b> dari PO asli yang Anda input di atas. <b>Qty Inbound</b> = barang yang dieksekusi di Inbound dengan No. PO terisi. <b>Qty Reject</b> = unit di Data Bin Reject yang membawa PO tersebut. Selisih, % dan Status dihitung dari barang yang datang (Qty Inbound + barang reject yang diterima lewat Inbound, Tipe: BARANG REJECT, dengan No. PO yang sama) dikurangi Qty PO. Model diambil dari nama barang.</div>
         </div>
       </section>
 
@@ -7160,26 +7159,26 @@ function renderPoRecap_(rows){
   const aksiTh = document.getElementById("poAksiTh"); if(aksiTh) aksiTh.style.display = adm ? "" : "none";
   const q = poNk_(document.getElementById("poFilter").value);
   const list = q ? rows.filter(r => poNk_(r.po).includes(q) || poNk_(r.model).includes(q)) : rows;
-  if(!list.length){ tb.innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding:20px;">' + (rows.length ? "Tidak ada baris yang cocok." : "Belum ada data. Input PO asli di atas, dan isi No. PO saat Inbound.") + '</td></tr>'; return; }
+  if(!list.length){ tb.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; padding:20px;">' + (rows.length ? "Tidak ada baris yang cocok." : "Belum ada data. Input PO asli di atas, dan isi No. PO saat Inbound.") + '</td></tr>'; return; }
   let tr = 0, ti = 0, td = 0, tdPo = 0, tp = 0;
   const html = list.map(r => {
     tr += r.reject; ti += r.inbound; td += r.datang; if(r.qtyPo !== null){ tp += r.qtyPo; tdPo += r.datang; }
     const cs = r.selisih === null ? "hint" : (r.selisih < 0 ? "op-selisih-kurang" : (r.selisih > 0 ? "op-selisih-uid" : "op-selisih-ok"));
     const cp = r.pct === null ? "hint" : (r.pct >= 100 ? "op-selisih-ok" : (r.pct >= 50 ? "op-selisih-uid" : "op-selisih-kurang"));
     const st = poStatus_(r);
-    return `<tr><td>${escUid_(r.model)}</td><td style="font-family:var(--font-mono);">${escUid_(r.po)}</td><td style="text-align:center;">${r.reject}</td><td style="text-align:center;">${r.inbound}</td><td style="text-align:center; font-weight:700;">${r.datang}</td><td style="text-align:center;">${r.qtyPo === null ? "-" : r.qtyPo}</td><td style="text-align:center; font-weight:700;" class="${cs}">${r.selisih === null ? "-" : r.selisih}</td><td style="text-align:center; font-weight:700;" class="${cp}">${r.pct === null ? "-" : r.pct.toFixed(1) + "%"}</td><td style="text-align:center;"><span class="badge ${st[1]}">${st[0]}</span></td><td style="text-align:center; white-space:nowrap;${adm ? "" : " display:none;"}">${r.qtyPo !== null ? `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-edit="${escUid_(r.po)}||${escUid_(r.model)}" title="Edit PO asli baris ini">✏️</button> <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-del="${escUid_(r.po)}||${escUid_(r.model)}" title="Hapus PO asli baris ini (data Inbound tidak terhapus)">✕</button>` : `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-fix="${escUid_(r.po)}||${escUid_(r.model)}" title="Koreksi / lepas No. PO yang salah pada data Inbound (stok tidak berubah, khusus Admin)">🧹</button>`}</td></tr>`;
+    return `<tr><td>${escUid_(r.model)}</td><td style="font-family:var(--font-mono);">${escUid_(r.po)}</td><td style="text-align:center;">${r.reject}</td><td style="text-align:center;">${r.inbound}</td><td style="text-align:center;">${r.qtyPo === null ? "-" : r.qtyPo}</td><td style="text-align:center; font-weight:700;" class="${cs}">${r.selisih === null ? "-" : r.selisih}</td><td style="text-align:center; font-weight:700;" class="${cp}">${r.pct === null ? "-" : r.pct.toFixed(1) + "%"}</td><td style="text-align:center;"><span class="badge ${st[1]}">${st[0]}</span></td><td style="text-align:center; white-space:nowrap;${adm ? "" : " display:none;"}">${r.qtyPo !== null ? `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-edit="${escUid_(r.po)}||${escUid_(r.model)}" title="Edit PO asli baris ini">✏️</button> <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-del="${escUid_(r.po)}||${escUid_(r.model)}" title="Hapus PO asli baris ini (data Inbound tidak terhapus)">✕</button>` : `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-fix="${escUid_(r.po)}||${escUid_(r.model)}" title="Koreksi / lepas No. PO yang salah pada data Inbound (stok tidak berubah, khusus Admin)">🧹</button>`}</td></tr>`;
   }).join("");
   const tsel = tp ? tdPo - tp : null, tpct = tp ? Math.round(tdPo / tp * 1000) / 10 : null;
-  tb.innerHTML = html + `<tr style="font-weight:800; background:var(--bg-input);"><td colspan="2">TOTAL</td><td style="text-align:center;">${tr}</td><td style="text-align:center;">${ti}</td><td style="text-align:center;">${td}</td><td style="text-align:center;">${tp || "-"}</td><td style="text-align:center;">${tsel === null ? "-" : tsel}</td><td style="text-align:center;">${tpct === null ? "-" : tpct.toFixed(1) + "%"}</td><td></td>${adm ? "<td></td>" : ""}</tr>`;
+  tb.innerHTML = html + `<tr style="font-weight:800; background:var(--bg-input);"><td colspan="2">TOTAL</td><td style="text-align:center;">${tr}</td><td style="text-align:center;">${ti}</td><td style="text-align:center;">${tp || "-"}</td><td style="text-align:center;">${tsel === null ? "-" : tsel}</td><td style="text-align:center;">${tpct === null ? "-" : tpct.toFixed(1) + "%"}</td><td></td>${adm ? "<td></td>" : ""}</tr>`;
 }
 async function loadPoInbound(){
   const tb = document.getElementById("poRecapBody");
-  tb.innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center;">Memuat...</td></tr>';
+  tb.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center;">Memuat...</td></tr>';
   try{
     const [moves, scans] = await Promise.all([idbGetAllMovements(), idbGetAllScans()]);
     poRecapCache = computePoRecap_(moves.filter(m => m && !m.reverted), scans);
     renderPoRecap_(poRecapCache);
-  }catch(err){ console.error(err); tb.innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; color:red;">Gagal memuat: ' + escUid_(err.message) + '</td></tr>'; }
+  }catch(err){ console.error(err); tb.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; color:red;">Gagal memuat: ' + escUid_(err.message) + '</td></tr>'; }
 }
 function poParse_(rows){
   let h = -1; const col = {};
@@ -7243,11 +7242,6 @@ document.getElementById("poFile").addEventListener("change", (e) => {
   };
   rd.readAsArrayBuffer(f);
 });
-document.getElementById("poTemplate").onclick = () => {
-  const ws = XLSX.utils.aoa_to_sheet([["PO", "Model", "Qty"], ["AN/2610-019", "Roland Shirt Kids", 28], ["AN/2610-020", "Roland Shirt Dad", 24]]);
-  ws["!cols"] = [{ wch: 18 }, { wch: 28 }, { wch: 10 }];
-  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "PO Asli"); XLSX.writeFile(wb, "Template_PO_Asli.xlsx");
-};
 // Koreksi No. PO yang salah pada data Inbound. TIDAK menghapus stok: hanya melepas / mengganti tag "| PO xxx"
 // pada log Inbound (movement) dan baris stok (scan) untuk pasangan PO + Model yang dipilih. Khusus Admin.
 async function poFixWrongPo_(po, model){
