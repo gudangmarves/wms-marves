@@ -772,7 +772,9 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
               <select id="inboundType" class="input-sm" style="margin-bottom: 12px; font-weight: bold; color: var(--accent);">
                  <option value="INBOUND">Tipe: BARANG BARU (INBOUND)</option>
                  <option value="RETUR">Tipe: BARANG KEMBALI (RETUR)</option>
+                 <option value="REJECT">Tipe: BARANG REJECT (masuk ke Bin Reject)</option>
               </select>
+              <input id="rejectReasonInput" class="input-sm hidden" list="rjReasonList" type="text" placeholder="Alasan reject (mis. Cacat produksi, Rusak)" autocomplete="off" style="margin-bottom: 10px; font-weight: bold; color: var(--danger);">
               <select id="returChannel" class="input-sm hidden" style="margin-bottom: 10px; font-weight: bold; color: var(--warning);">
                  <option value="LIVE">Channel Retur: LIVE</option>
                  <option value="METRO">Channel Retur: METRO</option>
@@ -813,7 +815,8 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
         </div>
 
         <!-- DOKUMEN MUTASI: pencocokan hasil scan dengan qty dokumen -->
-        <div class="card" id="mutasiCard" style="margin: 0; grid-column: 1 / -1;">
+        <!-- Dokumen Mutasi: disembunyikan sementara (kode tetap ada). Hapus display:none untuk menampilkan lagi. -->
+        <div class="card" id="mutasiCard" style="margin: 0; grid-column: 1 / -1; display: none;">
           <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px;">
             <h3 class="card-header" style="margin:0; border:0; padding:0; flex:1; min-width:220px;">📄 Dokumen Mutasi (pencocokan scan)</h3>
             <label class="btn btn-ghost btn-sm" for="mutasiFile" style="cursor:pointer;">⬆ Upload Excel Mutasi</label>
@@ -3433,6 +3436,19 @@ async function handleScan(sku, uid){
 }
 
 async function handleScanCore(sku, uid){
+  if(inboundType.value === "REJECT"){
+    if(!normRejectBin_(binInput.value)){
+      document.getElementById("scanResult").innerHTML = `<div class="result notfound">
+        <div class="sku">${escUid_(sku)}</div>
+        <div class="nama">Barang reject wajib diisi Bin / Karung Reject (contoh: KARUNG-01 menjadi RJ-KARUNG-01).</div>
+        <div style="margin-top:4px"><span class="badge bad">⛔ BIN REJECT KOSONG — DITOLAK</span></div>
+      </div>`;
+      toast("Isi Bin / Karung Reject dahulu untuk barang reject.", "bad");
+      binInput.focus();
+      return;
+    }
+    binInput.value = normRejectBin_(binInput.value);
+  }
   if(document.getElementById("inWh").value !== WH_BESAR && isGBBin_(binInput.value)){
     document.getElementById("scanResult").innerHTML = `<div class="result notfound">
       <div class="sku">${escUid_(sku)}</div>
@@ -3481,7 +3497,8 @@ async function handleScanCore(sku, uid){
   }
 
   if(product && product.sku) sku = product.sku; // samakan dengan tulisan SKU di Master (huruf besar/kecil)
-  const binValue = binInput.value.trim().toUpperCase() || "-";
+  const binValue = (inboundType.value === "REJECT" ? normRejectBin_(binInput.value) : binInput.value.trim().toUpperCase()) || "-";
+  const rejectReasonValue = inboundType.value === "REJECT" ? ((document.getElementById("rejectReasonInput").value || "").trim() || "Tidak disebutkan") : "";
   const docNoValue = docNoInput.value.trim().toUpperCase();
   const poValue = poInput.value.trim().toUpperCase();
   const typeValue = inboundType.value; 
@@ -3505,8 +3522,9 @@ async function handleScanCore(sku, uid){
   const mutasiWarn = mutasiScanWarn_(sku, docNoValue, typeValue);
   sessionInboundScans.push({
     id: generateID(), wh: document.getElementById("inWh").value === WH_BESAR ? WH_BESAR : WH_RTS, sku, uid: uid || null, nama: product ? product.nama : null, found: !!product, bin: binValue, docNo: docNoValue || "", ts: new Date().toISOString(), type: typeValue, returChannel: returChannelValue,
-    remark: (typeValue === "RETUR" ? `Retur Barang (${returChannelValue})` : "Scanned IN") + (poValue ? ` | PO ${poValue}` : ""),
-    po: poValue || undefined
+    remark: (typeValue === "RETUR" ? `Retur Barang (${returChannelValue})` : (typeValue === "REJECT" ? `Inbound Reject: ${rejectReasonValue}` : "Scanned IN")) + (poValue ? ` | PO ${poValue}` : ""),
+    po: poValue || undefined,
+    rejectReason: rejectReasonValue || undefined
   });
 
   if(mutasiWarn){
@@ -3684,6 +3702,10 @@ function applyInboundRules_(){
   const wh = document.getElementById("inWh"), isIn = inboundType.value === "INBOUND";
   wh.value = isIn ? WH_BESAR : WH_RTS;
   wh.disabled = false;
+  const isRj = inboundType.value === "REJECT";
+  if (isRj) { wh.value = WH_RTS; wh.disabled = true; } // barang reject selalu ke Bin Reject (RJ-) di sisi RTS
+  const rjReasonEl = document.getElementById("rejectReasonInput");
+  if (rjReasonEl) rjReasonEl.classList.toggle("hidden", !isRj);
   wh.classList.toggle("wh-besar", wh.value === WH_BESAR);
   updateInboundBinHint_();
 }
@@ -3696,7 +3718,8 @@ binInput.addEventListener("input", () => {
 });
 function updateInboundBinHint_(){
   const wh = document.getElementById("inWh");
-  binInput.placeholder = wh.value === WH_BESAR ? "Bin Gudang Besar (Wajib, awalan GB-)" : "Lokasi Bin (Opsional)";
+  binInput.placeholder = inboundType.value === "REJECT" ? "Bin / Karung Reject (Wajib, otomatis awalan RJ-)"
+    : (wh.value === WH_BESAR ? "Bin Gudang Besar (Wajib, awalan GB-)" : "Lokasi Bin (Opsional)");
 }
 (function(){
   const el = document.getElementById("inWh");
@@ -3721,10 +3744,15 @@ document.getElementById("btnExecInbound").onclick = async () => {
               if (uidIdx.has(U)) { skippedDup++; continue; } // UID sudah masuk stok (mis. dari perangkat lain)
               uidIdx.set(U, item);
           }
-          const entry = { id: item.id, sku: item.sku, uid: item.uid || null, nama: item.nama, found: item.found, bin: item.bin, docNo: item.docNo, ts: item.ts, sessionActive: true, type: item.type, returChannel: item.returChannel, remark: item.remark, po: item.po || undefined, wh: item.wh === WH_BESAR ? WH_BESAR : WH_RTS };
+          const isRj = item.type === "REJECT";
+          const entry = { id: item.id, sku: item.sku, uid: item.uid || null, nama: item.nama, found: item.found, bin: item.bin, docNo: item.docNo, ts: item.ts, sessionActive: true, type: isRj ? "IN" : item.type, returChannel: item.returChannel, remark: item.remark, po: item.po || undefined, wh: isRj ? WH_RTS : (item.wh === WH_BESAR ? WH_BESAR : WH_RTS) };
+          if (isRj) { // barang reject dari penerimaan: langsung ke Data Bin Reject, tidak dihitung sebagai stok
+            entry.isReject = true; entry.rejectFrom = "-"; entry.rejectReason = item.rejectReason || "Tidak disebutkan";
+            entry.rejectAt = new Date().toISOString(); entry.rejectBy = curBy_();
+          }
           await idbAddScan(entry);
           mutasiCountOne_(item);
-          await recordMovement(entry.id, item.type, item.sku, item.nama || "-", item.bin, item.remark, item.docNo, item.uid);
+          await recordMovement(entry.id, isRj ? "REJECT" : item.type, item.sku, item.nama || "-", item.bin, item.remark, item.docNo, item.uid);
       }
       invalidateUidIndex();
       mtSave_(); // simpan jumlah "Sudah Masuk" dokumen mutasi
@@ -3771,7 +3799,7 @@ function renderInboundLogCore_(){
     const tr = document.createElement("tr");
     const jam = r.ts ? new Date(r.ts).toLocaleTimeString("id-ID") : "-";
     tr.innerHTML = `
-      <td>${jam} <span class="badge ${r.type==='RETUR'?'warning':'good'}">${r.type}</span></td>
+      <td>${jam} <span class="badge ${r.type==='REJECT'?'bad':(r.type==='RETUR'?'warning':'good')}">${r.type}</span></td>
       <td><span style="color:var(--accent); font-weight:bold;">${r.bin || '-'}</span>${r.docNo ? `<br><span style="font-size:10px; color:var(--text-muted);">DOK: ${r.docNo}</span>` : ''}</td>
       <td class="sku">${r.sku}${r.uid ? `<br><span style="font-size:10px; color:var(--text-muted);">RFID: ${escUid_(r.uid)}</span>` : ''}</td>
       <td>${r.found ? r.nama : '<span class="badge bad">N/A</span>'}</td>
