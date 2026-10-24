@@ -664,6 +664,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
           <button class="nav-item" id="navSearchTab">🔎 Pencarian Barang</button>
           <button class="nav-item" id="navMovement">📜 Tracking Movement</button>
           <button class="nav-item" id="navHistoryCCTF">📜 History CC & Transfer</button>
+          <button class="nav-item" id="navPoInbound">📦 Rekap Inbound</button>
           <button class="nav-item" id="navDiscrepancy">⚖️ Discrepancy</button>
           <button class="nav-item" id="navMovementAnalysis">📈 Fast/Slow/Dead Stock</button>
         </div>
@@ -1226,6 +1227,43 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
         </div>
       </section>
 
+      <!-- ============================ TAB: PO INBOUND ============================ -->
+      <section id="tab-poinbound" class="hidden">
+        <div class="card" style="margin-bottom: 16px;">
+          <h3 class="card-header">📦 Rekap Inbound: PO Asli vs Barang Datang</h3>
+          <div class="hint" style="margin-bottom:10px;">Isi <b>PO asli</b> (jumlah yang dipesan), lalu bandingkan dengan barang yang sudah masuk lewat Inbound dengan No. PO yang sama. Cocokkan lewat <b>No. PO + Model</b>.</div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px;">
+            <input id="poNoInput" class="input-sm" type="text" placeholder="No. PO (mis. AN/2610-019)" autocomplete="off" style="margin:0; flex:1 1 200px;">
+            <input id="poModelInput" class="input-sm" type="text" placeholder="Model (mis. Roland Shirt Kids)" autocomplete="off" style="margin:0; flex:1 1 220px;">
+            <input id="poQtyInput" class="input-sm" type="number" min="1" placeholder="Qty PO" style="margin:0; width:110px;">
+            <button class="btn btn-accent btn-sm" id="poAddBtn">＋ Tambah PO</button>
+            <button class="btn btn-ghost btn-sm hidden" id="poCancelEdit" type="button">Batal</button>
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+            <label class="btn btn-ghost btn-sm" for="poFile" style="cursor:pointer;">⬆ Upload Excel PO</label>
+            <input type="file" id="poFile" accept=".xlsx,.xls,.csv" hidden>
+            <button class="btn btn-ghost btn-sm" id="poTemplate">⬇ Template Excel</button>
+            <span class="hint">Kolom: <b>PO</b>, <b>Model</b> (atau Product Name), <b>Qty</b>. PO + Model yang sama akan diganti nilainya, bukan dijumlah dua kali.</span>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom: 16px;">
+          <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px;">
+            <h3 class="card-header" style="margin:0; border:0; padding:0; flex:1; min-width:200px;">Rekap Inbound per PO</h3>
+            <input id="poFilter" class="input-sm" type="text" placeholder="🔍 Cari PO / Model..." autocomplete="off" style="margin:0; max-width:240px;">
+            <button class="btn btn-ghost btn-sm" id="poRefresh">🔄 Refresh</button>
+            <button class="btn btn-ghost btn-sm" id="poExport">⬇ Export Excel</button>
+          </div>
+          <div class="scroll-table" style="max-height: 420px;">
+            <table>
+              <thead><tr><th>Model</th><th>PO</th><th style="text-align:center;">Qty Reject</th><th style="text-align:center;">Qty Inbound</th><th style="text-align:center;">Qty PO</th><th style="text-align:center;">Selisih</th><th style="text-align:center;">%</th><th style="text-align:center;">Status</th><th style="text-align:center;">Aksi</th></tr></thead>
+              <tbody id="poRecapBody"><tr><td colspan="9" class="hint" style="text-align:center;">Memuat...</td></tr></tbody>
+            </table>
+          </div>
+          <div class="hint" style="margin-top:8px;"><b>Qty PO</b> dari PO asli yang Anda input di atas. <b>Qty Inbound</b> = barang yang dieksekusi di Inbound dengan No. PO terisi. <b>Qty Reject</b> = unit di Data Bin Reject yang membawa PO tersebut. Selisih = Inbound − PO. Model diambil dari nama barang.</div>
+        </div>
+      </section>
+
       <!-- ============================ TAB: PENCARIAN RIWAYAT ========================= -->
       <section id="tab-search" class="hidden" style="height: 100%;">
         <div class="card" style="display: flex; flex-direction: column; height: 100%; padding: 20px; margin-bottom: 0;">
@@ -1586,18 +1624,6 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
                 <h3 class="card-header">Distribusi Stok per Rak (A-H)</h3>
                 <div style="position:relative; height:280px;"><canvas id="chartRak"></canvas></div>
              </div>
-          </div>
-
-          <!-- ===== Rekap Inbound per PO ===== -->
-          <h3 class="card-header" style="margin: 8px 0 10px;">📦 Rekap Inbound per PO</h3>
-          <div class="card" style="margin: 0 0 16px;">
-             <div class="scroll-table" style="max-height: 380px;">
-               <table>
-                 <thead><tr><th>Model</th><th>PO</th><th style="text-align:center;">Qty Reject</th><th style="text-align:center;">Qty Inbound</th><th style="text-align:center;">Qty PO</th><th style="text-align:center;">Selisih</th><th style="text-align:center;">%</th></tr></thead>
-                 <tbody id="dashPoBody"><tr><td colspan="7" class="hint" style="text-align:center;">Memuat...</td></tr></tbody>
-               </table>
-             </div>
-             <div class="hint" style="margin-top:8px;"><b>Qty PO</b> dari Dokumen Mutasi yang diupload di Inbound. <b>Qty Inbound</b> = barang yang dieksekusi dengan No. PO terisi. <b>Qty Reject</b> = unit di Data Bin Reject yang membawa PO tersebut. Selisih = Inbound − PO. Model diambil dari nama barang.</div>
           </div>
 
           <!-- ===== Stock Opname Harian ===== -->
@@ -3169,6 +3195,7 @@ const tabNames = [
   { id: "allscan", nav: "navAllScan", tab: "tab-allscan" },
   { id: "bincl", nav: "navBinCL", tab: "tab-bincl" },
   { id: "movement", nav: "navMovement", tab: "tab-movement" },
+  { id: "poinbound", nav: "navPoInbound", tab: "tab-poinbound" },
   { id: "historycctf", nav: "navHistoryCCTF", tab: "tab-historycctf" },
   { id: "discrepancy", nav: "navDiscrepancy", tab: "tab-discrepancy" },
   { id: "movementanalysis", nav: "navMovementAnalysis", tab: "tab-movementanalysis" },
@@ -3223,6 +3250,7 @@ function switchTab(activeId) {
   if(activeId === "bincl") loadBinReject();
   if(activeId === "rfidmap") loadRfidMapTab();
   if(activeId === "users") loadUsersTab();
+  if(activeId === "poinbound") loadPoInbound();
   if(activeId === "movement") {
     document.getElementById("moveSearchSku").value = "";
     document.getElementById("moveStartDate").value = "";
@@ -3259,6 +3287,7 @@ function refreshCurrentTabView(){
       case "bincl": loadBinReject(); break;
       case "rfidmap": loadRfidMapTab(); break;
       case "users": loadUsersTab(); break;
+      case "poinbound": loadPoInbound(); break;
       case "movement":
         loadMovements(
           document.getElementById("moveSearchSku").value,
@@ -3292,6 +3321,7 @@ document.getElementById("navSearchTab").onclick = () => switchTab("search");
 document.getElementById("navAllScan").onclick = () => switchTab("allscan");
 document.getElementById("navBinCL").onclick = () => switchTab("bincl");
 document.getElementById("navMovement").onclick = () => switchTab("movement");
+document.getElementById("navPoInbound").onclick = () => switchTab("poinbound");
 document.getElementById("navHistoryCCTF").onclick = () => switchTab("historycctf");
 document.getElementById("navDiscrepancy").onclick = () => switchTab("discrepancy");
 document.getElementById("navMovementAnalysis").onclick = () => switchTab("movementanalysis");
@@ -7039,7 +7069,13 @@ document.getElementById("fileDashLogo").addEventListener("change", async (e) => 
 document.getElementById("btnPrintDashboard").onclick = () => exportDashboardReportExcel();
 document.getElementById("btnRefreshDashboard").onclick = () => loadDashboardReport();
 
-/* ---- Rekap Inbound per PO (Model x PO) ---- */
+/* ---- PO Inbound: PO asli (input) vs barang datang (Inbound) ----
+   PO asli disimpan di browser perangkat ini (localStorage). Qty Inbound dihitung dari log INBOUND yang remark-nya memuat "| PO xxx". */
+const PO_ASLI_KEY = "wms_po_asli_v1";
+let poAsli = [], poRecapCache = [];
+try{ poAsli = JSON.parse(localStorage.getItem(PO_ASLI_KEY) || "[]") || []; }catch(e){ poAsli = []; }
+function poSave_(){ try{ localStorage.setItem(PO_ASLI_KEY, JSON.stringify(poAsli)); }catch(e){ toast("Gagal menyimpan PO asli (penyimpanan browser penuh?)", "bad"); } }
+function poNk_(v){ return String(v == null ? "" : v).replace(/[\s\u00a0\u200b]+/g, " ").trim().toUpperCase(); }
 const PO_MODEL_STOP_ = new Set(["SET","SHIRT","GAMIS","DRESS","KIDS","DAD","MOM","GIRL","BOY","BABY","MAN","WOMAN","LADIES","PANTS","SKIRT","JACKET","VEST","TUNIK","BLOUSE","JUMPSUIT","OUTER","KEMEJA","KAOS","HIJAB","COUPLE","FAMILY","FOR"]);
 function poModelOf_(nama){
   const w = String(nama || "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
@@ -7048,43 +7084,160 @@ function poModelOf_(nama){
   w.forEach((x, i) => { if(PO_MODEL_STOP_.has(x.toUpperCase().replace(/[^A-Z]/g, ""))) last = i; });
   let part;
   if(last >= 1) part = w.slice(0, last + 1);
-  else { // tidak ada kata jenis/penanda: buang ukuran di belakang, lalu 1 kata warna bila nama cukup panjang
+  else {
     part = w.slice();
     if(/^(\d+|XXS|XS|S|M|L|XL|XXL|XXXL|\d+[YT])$/i.test(part[part.length - 1]) && part.length > 1) part.pop();
     if(part.length >= 3) part.pop();
   }
   return part.map(x => x.charAt(0).toUpperCase() + x.slice(1).toLowerCase()).join(" ");
 }
+// simpan/ganti qty untuk pasangan PO + Model
+function poSet_(po, model, qty){
+  po = poNk_(po); model = String(model || "").replace(/\s+/g, " ").trim(); qty = Number(qty);
+  if(!po || !model || !(qty > 0)) return false;
+  const ex = poAsli.find(r => poNk_(r.po) === po && poNk_(r.model) === poNk_(model));
+  if(ex){ ex.qty = qty; ex.model = model; } else poAsli.push({ id: "po_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7), po, model, qty });
+  return true;
+}
 function computePoRecap_(moves, scans){
   const map = new Map();
-  const get = (po, model) => { const k = po + "||" + model; let o = map.get(k); if(!o){ o = { po, model, reject: 0, inbound: 0, qtyPo: 0 }; map.set(k, o); } return o; };
+  const get = (po, model) => { const k = poNk_(po) + "||" + poNk_(model); let o = map.get(k); if(!o){ o = { po: poNk_(po), model, reject: 0, inbound: 0, qtyPo: 0, hasPo: false }; map.set(k, o); } return o; };
   const poOf = (remark) => { const m = String(remark || "").match(/\|\s*PO\s+(.+?)\s*$/i); return m ? m[1].trim().toUpperCase() : ""; };
+  poAsli.forEach(r => { const o = get(r.po, r.model); o.model = r.model; o.qtyPo += Number(r.qty) || 0; o.hasPo = true; });
   (moves || []).forEach(m => { if(m && m.type === "INBOUND"){ const po = poOf(m.remark); if(po) get(po, poModelOf_(m.nama)).inbound++; } });
-  (scans || []).forEach(r => { if(r && r.type !== "OUT" && r.po && isRejectRow_(r)) get(String(r.po).trim().toUpperCase(), poModelOf_(r.nama)).reject++; });
-  try{
-    Object.keys(mutasiState.docs).forEach(no => {
-      const d = mutasiState.docs[no]; const po = String(d.po || "").trim().toUpperCase(); if(!po) return;
-      (d.items || []).forEach(it => { get(po, poModelOf_(it.nama)).qtyPo += Number(it.qty) || 0; });
-    });
-  }catch(e){}
+  (scans || []).forEach(r => { if(r && r.type !== "OUT" && r.po && isRejectRow_(r)) get(String(r.po), poModelOf_(r.nama)).reject++; });
   return [...map.values()].sort((a, b) => a.po.localeCompare(b.po) || a.model.localeCompare(b.model)).map(o => ({
-    model: o.model, po: o.po, reject: o.reject, inbound: o.inbound, qtyPo: o.qtyPo,
-    selisih: o.qtyPo ? o.inbound - o.qtyPo : null, pct: o.qtyPo ? Math.round(o.inbound / o.qtyPo * 1000) / 10 : null
+    model: o.model, po: o.po, reject: o.reject, inbound: o.inbound, qtyPo: o.hasPo ? o.qtyPo : null,
+    selisih: o.hasPo ? o.inbound - o.qtyPo : null, pct: (o.hasPo && o.qtyPo > 0) ? Math.round(o.inbound / o.qtyPo * 1000) / 10 : null
   }));
 }
+function poStatus_(r){
+  if(r.qtyPo === null) return ["Tanpa PO asli", "muted"];
+  if(r.inbound === 0) return ["Belum datang", "muted"];
+  return r.inbound === r.qtyPo ? ["Sesuai", "good"] : (r.inbound < r.qtyPo ? ["Kurang", "bad"] : ["Lebih", "warning"]);
+}
 function renderPoRecap_(rows){
-  const tb = document.getElementById("dashPoBody"); if(!tb) return;
-  if(!rows.length){ tb.innerHTML = '<tr><td colspan="7" class="hint" style="text-align:center;">Belum ada data PO. Isi No. PO saat Inbound dan/atau upload Dokumen Mutasi.</td></tr>'; return; }
-  let tr = 0, ti = 0, tp = 0;
-  const html = rows.map(r => {
-    tr += r.reject; ti += r.inbound; tp += r.qtyPo;
+  const tb = document.getElementById("poRecapBody"); if(!tb) return;
+  const q = poNk_(document.getElementById("poFilter").value);
+  const list = q ? rows.filter(r => poNk_(r.po).includes(q) || poNk_(r.model).includes(q)) : rows;
+  if(!list.length){ tb.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; padding:20px;">' + (rows.length ? "Tidak ada baris yang cocok." : "Belum ada data. Input PO asli di atas, dan isi No. PO saat Inbound.") + '</td></tr>'; return; }
+  let tr = 0, ti = 0, tiPo = 0, tp = 0;
+  const html = list.map(r => {
+    tr += r.reject; ti += r.inbound; if(r.qtyPo !== null){ tp += r.qtyPo; tiPo += r.inbound; }
     const cs = r.selisih === null ? "hint" : (r.selisih < 0 ? "op-selisih-kurang" : (r.selisih > 0 ? "op-selisih-uid" : "op-selisih-ok"));
     const cp = r.pct === null ? "hint" : (r.pct >= 100 ? "op-selisih-ok" : (r.pct >= 50 ? "op-selisih-uid" : "op-selisih-kurang"));
-    return `<tr><td>${escUid_(r.model)}</td><td style="font-family:var(--font-mono);">${escUid_(r.po)}</td><td style="text-align:center;">${r.reject}</td><td style="text-align:center;">${r.inbound}</td><td style="text-align:center;">${r.qtyPo || "-"}</td><td style="text-align:center; font-weight:700;" class="${cs}">${r.selisih === null ? "-" : r.selisih}</td><td style="text-align:center; font-weight:700;" class="${cp}">${r.pct === null ? "-" : r.pct.toFixed(1) + "%"}</td></tr>`;
+    const st = poStatus_(r);
+    return `<tr><td>${escUid_(r.model)}</td><td style="font-family:var(--font-mono);">${escUid_(r.po)}</td><td style="text-align:center;">${r.reject}</td><td style="text-align:center;">${r.inbound}</td><td style="text-align:center;">${r.qtyPo === null ? "-" : r.qtyPo}</td><td style="text-align:center; font-weight:700;" class="${cs}">${r.selisih === null ? "-" : r.selisih}</td><td style="text-align:center; font-weight:700;" class="${cp}">${r.pct === null ? "-" : r.pct.toFixed(1) + "%"}</td><td style="text-align:center;"><span class="badge ${st[1]}">${st[0]}</span></td><td style="text-align:center; white-space:nowrap;">${r.qtyPo !== null ? `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-edit="${escUid_(r.po)}||${escUid_(r.model)}" title="Edit PO asli baris ini">✏️</button> <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-del="${escUid_(r.po)}||${escUid_(r.model)}" title="Hapus PO asli baris ini (data Inbound tidak terhapus)">✕</button>` : ""}</td></tr>`;
   }).join("");
-  const tsel = tp ? ti - tp : null, tpct = tp ? Math.round(ti / tp * 1000) / 10 : null;
-  tb.innerHTML = html + `<tr style="font-weight:800; background:var(--bg-input);"><td colspan="2">TOTAL</td><td style="text-align:center;">${tr}</td><td style="text-align:center;">${ti}</td><td style="text-align:center;">${tp || "-"}</td><td style="text-align:center;">${tsel === null ? "-" : tsel}</td><td style="text-align:center;">${tpct === null ? "-" : tpct.toFixed(1) + "%"}</td></tr>`;
+  const tsel = tp ? tiPo - tp : null, tpct = tp ? Math.round(tiPo / tp * 1000) / 10 : null;
+  tb.innerHTML = html + `<tr style="font-weight:800; background:var(--bg-input);"><td colspan="2">TOTAL</td><td style="text-align:center;">${tr}</td><td style="text-align:center;">${ti}</td><td style="text-align:center;">${tp || "-"}</td><td style="text-align:center;">${tsel === null ? "-" : tsel}</td><td style="text-align:center;">${tpct === null ? "-" : tpct.toFixed(1) + "%"}</td><td></td><td></td></tr>`;
 }
+async function loadPoInbound(){
+  const tb = document.getElementById("poRecapBody");
+  tb.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center;">Memuat...</td></tr>';
+  try{
+    const [moves, scans] = await Promise.all([idbGetAllMovements(), idbGetAllScans()]);
+    poRecapCache = computePoRecap_(moves.filter(m => m && !m.reverted), scans);
+    renderPoRecap_(poRecapCache);
+  }catch(err){ console.error(err); tb.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; color:red;">Gagal memuat: ' + escUid_(err.message) + '</td></tr>'; }
+}
+function poParse_(rows){
+  let h = -1; const col = {};
+  for(let i = 0; i < Math.min(rows.length, 15); i++){
+    const low = (rows[i] || []).map(c => String(c == null ? "" : c).trim().toLowerCase());
+    if(low.some(c => c === "po" || c.includes("no po") || c.includes("nomor po") || c.includes("no. po")) && low.some(c => c.includes("qty") || c.includes("jumlah"))){
+      h = i;
+      low.forEach((c, j) => {
+        if(c === "po" || c.includes("no po") || c.includes("nomor po") || c.includes("no. po")) col.po = j;
+        else if(c === "model") col.model = j;
+        else if(c.includes("product") || c.includes("nama")) col.nama = j;
+        else if(c.includes("qty") || c.includes("jumlah")) col.qty = j;
+      });
+      break;
+    }
+  }
+  if(h < 0 || col.po == null || col.qty == null || (col.model == null && col.nama == null)) return null;
+  const agg = new Map();
+  for(let r = h + 1; r < rows.length; r++){
+    const row = rows[r] || [];
+    const po = poNk_(row[col.po]); const qty = Number(row[col.qty]);
+    const model = col.model != null && row[col.model] ? String(row[col.model]).trim() : poModelOf_(row[col.nama]);
+    if(!po || !model || !(qty > 0)) continue;
+    const k = po + "||" + poNk_(model);
+    const o = agg.get(k) || { po, model, qty: 0 }; o.qty += qty; agg.set(k, o);
+  }
+  return agg.size ? [...agg.values()] : null;
+}
+let poEditing = null; // { po, model } baris PO asli yang sedang diedit
+function poExitEdit_(){
+  poEditing = null;
+  document.getElementById("poAddBtn").textContent = "＋ Tambah PO";
+  document.getElementById("poCancelEdit").classList.add("hidden");
+  ["poNoInput", "poModelInput", "poQtyInput"].forEach(id => { document.getElementById(id).value = ""; });
+}
+document.getElementById("poAddBtn").onclick = () => {
+  const po = document.getElementById("poNoInput").value, model = document.getElementById("poModelInput").value, qty = document.getElementById("poQtyInput").value;
+  if(!(poNk_(po) && String(model).trim() && Number(qty) > 0)){ toast("Isi No. PO, Model, dan Qty (lebih dari 0).", "warning"); return; }
+  if(poEditing){ // ganti baris lama dengan nilai baru (No. PO / Model / Qty boleh diubah)
+    poAsli = poAsli.filter(r => !(poNk_(r.po) === poNk_(poEditing.po) && poNk_(r.model) === poNk_(poEditing.model)));
+  }
+  const was = !!poEditing;
+  poSet_(po, model, qty); poSave_();
+  poExitEdit_(); document.getElementById("poNoInput").focus();
+  toast(was ? "✓ PO asli diperbarui" : "✓ PO asli disimpan", "good"); loadPoInbound();
+};
+document.getElementById("poCancelEdit").onclick = () => poExitEdit_();
+document.getElementById("poQtyInput").addEventListener("keydown", (e) => { if(e.key === "Enter") document.getElementById("poAddBtn").click(); });
+document.getElementById("poFile").addEventListener("change", (e) => {
+  const f = e.target.files[0]; if(!f) return;
+  const rd = new FileReader();
+  rd.onload = (ev) => {
+    try{
+      const wb = XLSX.read(ev.target.result, { type: "array" });
+      const res = poParse_(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "", raw: true }));
+      if(!res){ toast("Format tidak dikenali. Butuh kolom PO, Model (atau Product Name), dan Qty.", "bad"); return; }
+      res.forEach(r => poSet_(r.po, r.model, r.qty));
+      poSave_(); toast(`✓ ${res.length} baris PO asli dimuat`, "good"); loadPoInbound();
+    }catch(err){ console.error(err); toast("Gagal membaca file PO", "bad"); }
+    e.target.value = "";
+  };
+  rd.readAsArrayBuffer(f);
+});
+document.getElementById("poTemplate").onclick = () => {
+  const ws = XLSX.utils.aoa_to_sheet([["PO", "Model", "Qty"], ["AN/2610-019", "Roland Shirt Kids", 28], ["AN/2610-020", "Roland Shirt Dad", 24]]);
+  ws["!cols"] = [{ wch: 18 }, { wch: 28 }, { wch: 10 }];
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "PO Asli"); XLSX.writeFile(wb, "Template_PO_Asli.xlsx");
+};
+document.getElementById("poRecapBody").addEventListener("click", (e) => {
+  const eb = e.target.closest("[data-po-edit]");
+  if(eb){
+    const [epo, emodel] = eb.getAttribute("data-po-edit").split("||");
+    const row = poAsli.find(r => poNk_(r.po) === poNk_(epo) && poNk_(r.model) === poNk_(emodel));
+    if(!row){ toast("PO asli tidak ditemukan.", "warning"); return; }
+    poEditing = { po: row.po, model: row.model };
+    document.getElementById("poNoInput").value = row.po;
+    document.getElementById("poModelInput").value = row.model;
+    document.getElementById("poQtyInput").value = row.qty;
+    document.getElementById("poAddBtn").textContent = "💾 Simpan Perubahan";
+    document.getElementById("poCancelEdit").classList.remove("hidden");
+    document.getElementById("poQtyInput").focus(); document.getElementById("poQtyInput").select();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
+  const b = e.target.closest("[data-po-del]"); if(!b) return;
+  const [po, model] = b.getAttribute("data-po-del").split("||");
+  if(!confirm("Hapus PO asli " + po + " - " + model + "? Data Inbound yang sudah masuk tidak ikut terhapus.")) return;
+  poAsli = poAsli.filter(r => !(poNk_(r.po) === poNk_(po) && poNk_(r.model) === poNk_(model))); poSave_(); loadPoInbound();
+});
+document.getElementById("poRefresh").onclick = () => loadPoInbound();
+document.getElementById("poFilter").addEventListener("input", () => renderPoRecap_(poRecapCache));
+document.getElementById("poExport").onclick = () => {
+  if(!poRecapCache.length){ toast("Belum ada data untuk diekspor.", "warning"); return; }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(poRecapCache.map(x => ({ "Model": x.model, "PO": x.po, "Qty Reject": x.reject, "Qty Inbound": x.inbound, "Qty PO": x.qtyPo === null ? "-" : x.qtyPo, "Selisih": x.selisih === null ? "-" : x.selisih, "%": x.pct === null ? "-" : x.pct + "%", "Status": poStatus_(x)[0] }))), "Rekap PO");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(poAsli.map(r => ({ "PO": r.po, "Model": r.model, "Qty PO": r.qty }))), "PO Asli");
+  XLSX.writeFile(wb, "Rekap_PO_Inbound.xlsx");
+};
 
 async function loadDashboardReport() {
   document.getElementById("dashGeneratedAt").textContent = "Dibuat: " + new Date().toLocaleString("id-ID");
@@ -7271,13 +7424,9 @@ async function loadDashboardReport() {
           }
       }, [maQtyValuePlugin]);
 
-      const poRecap = computePoRecap_(validMoves, allScansRaw);
-      renderPoRecap_(poRecap);
-
       // Simpan snapshot data untuk tombol Export Excel
       dashReportCache = {
           generatedAt: new Date(),
-          poRecap,
           kpi: { totalSku, totalQty, binsUsed: binsUsed.size, inbound30, outbound30, emptyBinCount, deadCount, diffCount },
           topSkus: topSkus.map(([sku, info]) => ({ sku, nama: info.nama || 'TIDAK DIKENALI', qty: info.qty })),
           catCounts,
@@ -7320,8 +7469,6 @@ function exportDashboardReportExcel() {
   const catLabelMap = { "FAST MOVING": "Fast Moving", "SLOW MOVING": "Slow Moving", "DEAD STOCK": "Dead Stock", "BARU / BELUM TERJUAL": "Baru / Belum Terjual", "RESTOCK BARU": "Restock Baru" };
   const wsCat = XLSX.utils.json_to_sheet(Object.keys(catLabelMap).map(k => ({ "Kategori": catLabelMap[k], "Jumlah SKU": d.catCounts[k] || 0 })));
   XLSX.utils.book_append_sheet(wb, wsCat, "Kategori Stok");
-
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.poRecap || []).map(x => ({ "Model": x.model, "PO": x.po, "Qty Reject": x.reject, "Qty Inbound": x.inbound, "Qty PO": x.qtyPo, "Selisih": x.selisih === null ? "-" : x.selisih, "%": x.pct === null ? "-" : x.pct + "%" }))), "Rekap PO");
 
   const wsRak = XLSX.utils.json_to_sheet(d.rak.map(x => ({ "Rak": x.rak, "Qty": x.qty })));
   XLSX.utils.book_append_sheet(wb, wsRak, "Distribusi per Rak");
@@ -8651,7 +8798,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       const list = getUsers_();
       let added = 0, updated = 0;
       incoming.forEach(u => {
-        if(!u || !u.name || !u.hash || !(u.role in { admin:1, operator:1, dashboard:1, search:1 })) return;
+        if(!u || !u.name || !u.hash || !(u.role in { admin:1, operator:1, outbound:1, dashboard:1, search:1 })) return;
         const i = list.findIndex(x => String(x.name).toLowerCase() === String(u.name).toLowerCase());
         const nm = i >= 0 ? list[i].name : String(u.name);
         const pwI = u.pw ? String(u.pw) : undefined;
@@ -8672,7 +8819,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
 (function initRoleLogin(){
   const ROLE_TABS = {
     admin: null,
-    operator: ["scan","outbound","cyclecount","opname","transferbin","transfergudang","search","movement","historycctf","discrepancy","qrcode"],
+    operator: ["scan","outbound","cyclecount","opname","transferbin","transfergudang","search","movement","poinbound","historycctf","discrepancy","qrcode"],
     outbound: ["bincl","search"], // Tim Outbound: input Data Bin Reject (tanpa tombol Kembalikan) + Pencarian Barang
     dashboard: ["dashboardreport"],
     search: ["search"]
