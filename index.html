@@ -1344,7 +1344,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
                 <button class="btn btn-ghost btn-sm" id="btnDupUid" title="Cari dan bersihkan unit yang RFID/UID-nya tercatat lebih dari satu kali">🧹 UID Ganda</button>
                 <input type="file" id="fileUploadScan" accept=".xlsx,.xls,.csv" class="hidden">
                 <button class="btn btn-ghost btn-sm" onclick="document.getElementById('fileUploadScan').click()" title="Upload File Master">⬆️ Upload Data</button>
-                <button class="btn btn-accent btn-sm" id="btnExportAllScan" title="Export Excel Data Induk">⬇️ Export</button>
+                <button class="btn btn-accent btn-sm" id="btnExportAllScan" title="Export sesuai filter yang aktif (kosongkan kolom cari untuk mengekspor semua data)">⬇️ Export</button>
                 <button class="btn btn-danger btn-sm" id="btnClearAllScan" title="Hapus Bersih Seluruh Data Induk Lokal">🗑️ Clear Master</button>
              </div>
           </div>
@@ -2964,7 +2964,7 @@ function idbPutMasterBulk(items){
     const tx = idb.transaction("master", "readwrite");
     const store = tx.objectStore("master");
     items.forEach(it=>store.put(cleanRec_(it)));
-    tx.oncomplete = ()=>{ idbEnqueueSync("master", "put", items.map(x=>x.sku), items).then(resolve); };
+    tx.oncomplete = ()=>{ idbEnqueueSync("master", "put", items.map(x=>x.sku), items).then(resolve); if(items.length) scheduleNameReconcile_(2500); }; // Master diubah di perangkat ini (mis. upload Master) -> nama di semua data ikut disamakan otomatis
   });
 }
 function idbGetMaster(sku){
@@ -5171,7 +5171,7 @@ function renderAllScanView_(){
   if(info){
     if(q){
       const skuCount = new Set(filtered.map(r => r.sku)).size;
-      info.textContent = `Hasil: ${filtered.length} item · ${skuCount} SKU`;
+      info.textContent = `Hasil: ${filtered.length} item · ${skuCount} SKU · Export = hasil ini`;
     } else info.textContent = "";
   }
 
@@ -7623,12 +7623,24 @@ function renderDashChart(canvasId, type, data, extraOptions, customPlugins) {
   });
 }
 
+// Filter yang sedang aktif di Data Induk (kolom "Cari" + pilihan Bin/SKU/UID/Gudang/Nama/Semua)
+function getAllScanFilter_(){
+  const qEl = document.getElementById("allScanSearch"), fEl = document.getElementById("allScanSearchField");
+  const rawQ = qEl ? qEl.value.trim() : "";
+  return { rawQ, q: rawQ.toUpperCase(), field: fEl ? fEl.value : "bin" };
+}
+
 document.getElementById("btnExportAllScan").onclick = async ()=>{
   const rows = await idbGetAllScans();
   const validRows = rows.filter(r => r !== null && r !== undefined && r.type !== 'OUT');
   if(validRows.length === 0){ toast("Tidak ada data", ""); return; }
-  
-  const wsData = validRows.map(r=>({
+
+  // Hanya ekspor baris yang cocok dengan filter (seluruh hasil, bukan hanya yang tampil di layar). Tanpa filter = semua data.
+  const f = getAllScanFilter_();
+  const exportRows = f.q ? validRows.filter(r => allScanMatch_(r, f.q, f.field)) : validRows;
+  if(exportRows.length === 0){ toast("Tidak ada data yang cocok dengan filter \"" + f.rawQ + "\".", "warning"); return; }
+
+  const wsData = exportRows.map(r=>({
     "Waktu Masuk": r.ts ? new Date(r.ts).toLocaleString("id-ID") : "-",
     "Lokasi Bin": r.bin || "-",
     "SKU": r.sku,
@@ -7641,7 +7653,9 @@ document.getElementById("btnExportAllScan").onclick = async ()=>{
   const ws = XLSX.utils.json_to_sheet(wsData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Data Induk Fisik");
-  XLSX.writeFile(wb, `Data_Induk_Fisik_Lokal_${Date.now()}.xlsx`);
+  const tag = f.q ? "_" + f.field + "-" + f.rawQ.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 30) : "";
+  XLSX.writeFile(wb, `Data_Induk_Fisik_Lokal${tag}_${Date.now()}.xlsx`);
+  toast(f.q ? "✓ Export " + exportRows.length + " item sesuai filter (" + f.rawQ + ")" : "✓ Export " + exportRows.length + " item (semua data)", "good");
 };
 
 document.getElementById("btnClearAllScan").onclick = async ()=>{
