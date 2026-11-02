@@ -7901,8 +7901,11 @@ async function loadMovements(filterSku = "", startDate = "", endDate = "") {
             aksiHtml = `<span class="badge muted" title="Dikembalikan oleh ${escUid_(r.revertedBy || '-')} pada ${r.revertedAt ? new Date(r.revertedAt).toLocaleString('id-ID') : '-'}">↩ DIKEMBALIKAN</span>`;
         } else if (r.type === 'OUTBOUND' && !isOpnameMove && r.ref_id && isAdminNow_()) {
             aksiHtml = `<button class="btn btn-ghost btn-sm" data-mv-undo="${escUid_(r.id)}" title="Kembalikan unit ke Bin awal (khusus Admin)">↩ Kembalikan</button>`;
+        } else if (r.type === 'INBOUND' && r.reverted) {
+            aksiHtml = `<span class="badge muted" title="Inbound berlebih dihapus oleh ${escUid_(r.revertedBy || '-')} pada ${r.revertedAt ? new Date(r.revertedAt).toLocaleString('id-ID') : '-'}">🗑 DIHAPUS</span>`;
         } else if ((r.type === 'INBOUND' || r.type === 'REJECT') && !isOpnameMove && !r.reverted && isAdminNow_()) {
-            aksiHtml = `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-mv-po="${escUid_(r.id)}" title="Edit No. PO pada log Inbound ini (stok tidak berubah, khusus Admin)">✏️ PO</button>`;
+            aksiHtml = `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-mv-po="${escUid_(r.id)}" title="Edit No. PO pada log Inbound ini (stok tidak berubah, khusus Admin)">✏️ PO</button>`
+              + (r.type === 'INBOUND' ? ` <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-mv-delin="${escUid_(r.id)}" title="Hapus Inbound berlebih: unit ini dikeluarkan dari stok dan log dibatalkan (khusus Admin)">🗑️</button>` : '');
         }
         if (r.reverted) tr.style.opacity = "0.55";
 
@@ -8003,7 +8006,59 @@ async function editMovementPo_(moveId){
   try{ invalidateUidIndex(); }catch(e){}
   toast(newPo ? `✓ No. PO ${newPo} disimpan pada ${mvOut.length} log` : `✓ No. PO dilepas dari ${mvOut.length} log`, "good");
 }
+/* ---- Hapus Inbound berlebih dari Tracking Movement: khusus Admin ----
+   Efek: (1) unit pada baris stok yang terkait (id = ref_id log) dihapus dari stok, (2) log INBOUND ditandai "reverted"
+   (tetap tersimpan sebagai jejak audit dan otomatis tidak dihitung di Rekap Inbound / analisa lain), (3) dicatat log DELETE,
+   (4) hitungan "Sudah Masuk" pada dokumen mutasi (bila ada di perangkat ini) dikurangi 1.
+   Ditolak bila unit sudah tidak di stok atau sudah pernah keluar (Outbound), supaya riwayat tidak jadi tidak konsisten. */
+async function deleteInboundMovement_(moveId){
+  if(!isAdminNow_()){ toast("Hanya Admin yang bisa menghapus data Inbound.", "bad"); return; }
+  const moves = await idbGetAllMovements();
+  const m = moves.find(x => x && x.id === moveId);
+  if(!m || m.type !== "INBOUND"){ toast("Log INBOUND tidak ditemukan.", "bad"); return; }
+  if(m.reverted){ toast("Log ini sudah dihapus sebelumnya.", "warning"); return; }
+  if(!m.ref_id || String(m.ref_id).startsWith("OPNAME_")){ toast("Penyesuaian Stock Opname tidak bisa dihapus dari sini.", "bad"); return; }
+  const scans = await idbGetAllScans();
+  const row = scans.find(r => r && r.id === m.ref_id);
+  const outLog = moves.find(x => x && x.ref_id === m.ref_id && x.type === "OUTBOUND" && !x.reverted);
+  if(outLog){ toast("Unit ini sudah pernah keluar (Outbound). Gunakan ↩ Kembalikan pada log Outbound-nya dulu bila memang ingin dibatalkan.", "bad"); return; }
+  if(row && row.type === "OUT"){ toast("Unit ini sudah berstatus keluar, tidak bisa dihapus dari sini.", "bad"); return; }
+  const dupe = moves.filter(x => x && x.id !== m.id && !x.reverted && x.type === "INBOUND" && x.sku === m.sku && x.bin === m.bin && (x.docNo || "") === (m.docNo || "")).length;
+  const info = `SKU: ${m.sku || "-"}\nNama: ${m.nama || "-"}\nBin: ${m.bin || "-"}\nRFID: ${m.uid || (row && row.uid) || "(tidak ada)"}\nWaktu: ${m.ts ? new Date(m.ts).toLocaleString("id-ID") : "-"}\nDokumen: ${m.docNo || "-"}\nNo. PO: ${poOfRemark_(m.remark) || "-"}\n\nLog Inbound lain dengan SKU + Bin + Dokumen yang sama: ${dupe}`;
+  if(!row){
+    if(!confirm(`Unit ini SUDAH TIDAK ADA di stok (baris stok tidak ditemukan).\n\n${info}\n\nBatalkan HANYA log Inbound-nya saja? Stok tidak berubah.`)) return;
+  } else {
+    if(!confirm(`Hapus Inbound berlebih ini?\n\n${info}\n\nAkibatnya: unit dikeluarkan dari stok (stok berkurang 1) dan log Inbound dibatalkan. Tindakan tercatat sebagai DELETE.`)) return;
+  }
+  if(row){ await idbDeleteScan(row.id); }
+  m.reverted = true; m.revertedAt = new Date().toISOString(); m.revertedBy = curBy_();
+  await idbAddMovement(m);
+  await recordMovement(m.ref_id, "DELETE", m.sku, m.nama || "-", m.bin || "-",
+    `Hapus Inbound berlebih (Admin) - log ${m.ts ? new Date(m.ts).toLocaleString("id-ID") : ""}${row ? "" : ", hanya log (unit sudah tidak di stok)"}`, m.docNo || "", m.uid);
+  try{ invalidateUidIndex(); }catch(e){}
+  // koreksi hitungan "Sudah Masuk" dokumen mutasi (hanya jika dokumen ada di perangkat ini dan hitungannya > 0)
+  try{
+    const md = mtDoc_(m.docNo);
+    if(md){
+      const it = md.d.items.find(x => mtNk_(x.sku) === mtNk_(m.sku));
+      if(it && (it.recv || 0) > 0) it.recv--;
+      else if(md.d.extra && md.d.extra[m.sku] > 0) md.d.extra[m.sku]--;
+      mtSave_();
+    }
+  }catch(e){ console.warn(e); }
+  toast(row ? `✓ ${m.sku} dihapus dari stok dan log Inbound dibatalkan` : `✓ Log Inbound ${m.sku} dibatalkan`, "good");
+}
 document.getElementById("movementBody").addEventListener("click", async (e) => {
+  const db = e.target.closest("[data-mv-delin]");
+  if(db){
+    db.disabled = true;
+    try{
+      await deleteInboundMovement_(db.dataset.mvDelin);
+      loadMovements(document.getElementById("moveSearchSku").value, document.getElementById("moveStartDate").value, document.getElementById("moveEndDate").value);
+    }catch(err){ console.error(err); toast("Gagal menghapus Inbound: " + err.message, "bad"); }
+    db.disabled = false;
+    return;
+  }
   const pb = e.target.closest("[data-mv-po]");
   if(pb){
     pb.disabled = true;
