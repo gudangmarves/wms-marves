@@ -667,6 +667,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
           <button class="nav-item" id="navPoInbound">📦 Rekap Inbound</button>
           <button class="nav-item" id="navDiscrepancy">⚖️ Discrepancy</button>
           <button class="nav-item" id="navMovementAnalysis">📈 Fast/Slow/Dead Stock</button>
+          <button class="nav-item" id="navPendingan">⏳ Pendingan</button>
         </div>
       </div>
 
@@ -1490,6 +1491,36 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
               <tbody id="discrepancyBody">
                 <tr><td colspan="11" class="hint" style="text-align:center;">Upload data OH terlebih dahulu untuk memulai rekonsiliasi.</td></tr>
               </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ TAB: PENDINGAN ======================== -->
+      <section id="tab-pendingan" class="hidden" style="height: 100%;">
+        <div class="card" style="display:flex; flex-direction:column; height:100%; padding:16px 20px; margin-bottom:0;">
+          <div class="toolbar-row" style="margin-bottom:8px;">
+            <div class="ma-chips" role="group" aria-label="Filter channel" id="pdChips">
+
+            </div>
+            <div class="ma-chips" role="group" aria-label="Tampilan">
+              <button class="ma-chip on" id="pdViewSku">Per SKU</button>
+              <button class="ma-chip" id="pdViewRow">Per Pesanan</button>
+            </div>
+            <input type="text" id="pdSearch" class="input-sm toolbar-search" placeholder="🔍 Cari SKU / Nama / Toko..." autocomplete="off">
+            <input type="file" id="pdFile" accept=".xlsx,.xls,.csv" style="display:none;">
+            <button class="btn btn-accent btn-sm" id="pdUpload">⬆️ Upload Pesanan</button>
+            <button class="btn btn-danger btn-sm" id="pdClear" title="Hapus data pendingan">🗑️</button>
+            <button class="btn btn-ghost btn-sm" id="pdUndo" title="Batalkan 'Selesai' terakhir">↩️ Undo</button>
+            <div class="toolbar-spacer"></div>
+            <span class="toolbar-count" id="pdInfo"></span>
+            <button class="btn btn-ghost btn-sm" id="pdExport">⬇️ Export</button>
+          </div>
+          <div class="hint" style="margin-bottom:8px;">Batas kirim pesanan <b>TikTok dikurangi 2 hari</b> dari kolom "Dikirim Sebelum". Stok diambil dari stok fisik gudang (tanpa unit reject). Setelah barang keluar lewat Outbound, klik <b>✔ Selesai</b> untuk menghapusnya dari daftar pendingan.</div>
+          <div class="scroll-table fill">
+            <table>
+              <thead id="pdHead"></thead>
+              <tbody id="pdBody"><tr><td class="hint" style="text-align:center; padding:24px;">Upload file pesanan (kolom: Channel - Nama Toko, SKU Master, Jumlah, Dikirim Sebelum).</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -3200,6 +3231,7 @@ const tabNames = [
   { id: "historycctf", nav: "navHistoryCCTF", tab: "tab-historycctf" },
   { id: "discrepancy", nav: "navDiscrepancy", tab: "tab-discrepancy" },
   { id: "movementanalysis", nav: "navMovementAnalysis", tab: "tab-movementanalysis" },
+  { id: "pendingan", nav: "navPendingan", tab: "tab-pendingan" },
   { id: "dashboardreport", nav: "navDashboardReport", tab: "tab-dashboardreport" },
   { id: "master", nav: "navMaster", tab: "tab-master" },
   { id: "rfidmap", nav: "navRfidMap", tab: "tab-rfidmap" },
@@ -3226,7 +3258,7 @@ function switchTab(activeId) {
       }
   }
 
-  { const wide = activeId === "movementanalysis" || activeId === "opname";
+  { const wide = activeId === "movementanalysis" || activeId === "opname" || activeId === "pendingan";
     const sc = document.querySelector(".section-container"); if (sc) sc.classList.toggle("wide", wide);
     const ca = document.querySelector(".content-area"); if (ca) ca.classList.toggle("tight", wide); }
 
@@ -3268,6 +3300,7 @@ function switchTab(activeId) {
   if(activeId === "qrcode") document.getElementById("qrTextInput").focus();
   if(activeId === "discrepancy") loadDiscrepancy();
   if(activeId === "movementanalysis") loadMovementAnalysis();
+  if(activeId === "pendingan" && typeof renderPendingan === "function") renderPendingan();
   if(activeId === "dashboardreport") loadDashboardReport();
 }
 
@@ -9068,7 +9101,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
 (function initRoleLogin(){
   const ROLE_TABS = {
     admin: null,
-    operator: ["scan","outbound","cyclecount","opname","transferbin","transfergudang","search","movement","poinbound","historycctf","discrepancy","qrcode"],
+    operator: ["scan","outbound","cyclecount","opname","transferbin","transfergudang","search","movement","poinbound","historycctf","discrepancy","pendingan","qrcode"],
     outbound: ["bincl","search"], // Tim Outbound: input Data Bin Reject (tanpa tombol Kembalikan) + Pencarian Barang
     dashboard: ["dashboardreport"],
     search: ["search"]
@@ -9172,6 +9205,219 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   // Muat ulang halaman (F5) tetap di peran yang sama selama tab masih terbuka.
   const saved = getRole();
   if(saved in ROLE_TABS) applyRole(saved, (curUser_() || {}).name || "");
+})();
+
+/* ============ PENDINGAN (pesanan belum terkirim: filter Shopee / Non-Shopee, TikTok batas kirim -2 hari) ============ */
+(function(){
+  const KEY = "wms_pendingan_v1", TIKTOK_MINUS_DAYS = 2, DAY = 864e5;
+  let rows = [], chan = "all", view = "sku";
+  const KEY_DONE = "wms_pendingan_done_v1";
+  let ledger = {}, undoSnap = null;
+  try { rows = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch(e){ rows = []; }
+  try { ledger = JSON.parse(localStorage.getItem(KEY_DONE) || "{}"); } catch(e){ ledger = {}; }
+  const keyOf = r => r.sku.toUpperCase() + "|" + r.channel.toLowerCase() + "|" + r.due;
+  const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(rows)); localStorage.setItem(KEY_DONE, JSON.stringify(ledger)); } catch(e){} };
+  const $ = id => document.getElementById(id);
+  const isShopee = r => /^\s*shopee/i.test(r.channel);
+  const platOf = c => (String(c).split(" - ")[0] || String(c)).trim().toLowerCase();
+  const platLabel = p => p === "tiktok" ? "TikTok" : p.charAt(0).toUpperCase() + p.slice(1);
+  function renderChips(){
+    const cnt = {}; rows.forEach(r => { const p = platOf(r.channel); cnt[p] = (cnt[p] || 0) + 1; });
+    if (chan !== "all" && !cnt[chan]) chan = "all";
+    const chip = (k, label, n) => `<button class="ma-chip${chan === k ? " on" : ""}" data-chan="${escUid_(k)}">${escUid_(label)} <b>${n}</b></button>`;
+    $("pdChips").innerHTML = chip("all", "Semua", rows.length) + Object.keys(cnt).sort().map(p => chip(p, platLabel(p), cnt[p])).join("");
+  }
+  const isTiktok = r => /^\s*tiktok/i.test(r.channel);
+  const pad = n => String(n).padStart(2, "0");
+  const fmt = ms => { const d = new Date(ms); return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  function toMs(v){
+    if (v instanceof Date) return v.getTime();
+    if (typeof v === "number") return Math.round((v - 25569) * DAY);
+    const t = new Date(String(v).trim().replace(" ", "T")).getTime();
+    return isNaN(t) ? null : t;
+  }
+  // batas kirim efektif: TikTok dikurangi 2 hari
+  const deadline = r => r.due == null ? null : (isTiktok(r) ? r.due - TIKTOK_MINUS_DAYS * DAY : r.due);
+  const dueBadge = ms => {
+    if (ms == null) return `<span class="hint">-</span>`;
+    const diff = ms - Date.now(), col = diff < 0 ? "var(--danger)" : diff < DAY * 2 ? "var(--warning)" : "var(--text-main)";
+    return `<span style="color:${col}; font-weight:700;">${fmt(ms)}</span>${diff < 0 ? ' <span class="badge danger">TERLAMBAT</span>' : ''}`;
+  };
+
+  const stokCell = st => st > 0 ? `<span class="badge success" title="Stok sudah ada di gudang">✅ ${st}</span>` : `0`;
+  async function stockMap(){
+    const m = {};
+    try {
+      (await idbGetAllScans()).forEach(r => {
+        if (!r || r.type === "OUT" || isRejectRow_(r)) return;
+        const k = String(r.sku || "").toUpperCase();
+        (m[k] = m[k] || { qty: 0, nama: "" }).qty++;
+        if (!m[k].nama && r.nama) m[k].nama = r.nama;
+      });
+    } catch(e){ console.error(e); }
+    return m;
+  }
+
+  function filtered(){
+    const q = ($("pdSearch").value || "").toLowerCase().trim();
+    return rows.filter(r => (chan === "all" || platOf(r.channel) === chan) &&
+      (!q || r.sku.toLowerCase().includes(q) || r.channel.toLowerCase().includes(q)));
+  }
+
+  async function render(){
+    renderChips();
+    const head = $("pdHead"), body = $("pdBody");
+    if (!rows.length){ head.innerHTML = ""; body.innerHTML = `<tr><td class="hint" style="text-align:center; padding:24px;">Upload file pesanan (kolom: Channel - Nama Toko, SKU Master, Jumlah, Dikirim Sebelum).</td></tr>`; $("pdInfo").textContent = ""; return; }
+    const list = filtered(), stock = await stockMap();
+    const totalQty = list.reduce((a, r) => a + r.qty, 0);
+    $("pdInfo").innerHTML = `<b>${list.length}</b> pesanan · <b>${totalQty}</b> pcs`;
+    if (!list.length){ head.innerHTML = ""; body.innerHTML = `<tr><td class="hint" style="text-align:center; padding:24px;">Tidak ada data pada filter ini.</td></tr>`; return; }
+    if (view === "row"){
+      head.innerHTML = `<tr><th>Channel - Toko</th><th>SKU</th><th>Nama Barang</th><th style="text-align:center;">Qty</th><th style="text-align:center;">Stok</th><th>Batas Kirim</th><th style="text-align:center;">Aksi</th></tr>`;
+      body.innerHTML = list.slice().sort((a, b) => (deadline(a) ?? 9e15) - (deadline(b) ?? 9e15)).map(r => {
+        const s = stock[r.sku.toUpperCase()], orig = isTiktok(r) && r.due != null ? `<div class="hint" style="font-size:10px;">asli ${fmt(r.due)} (−${TIKTOK_MINUS_DAYS} hari)</div>` : "";
+        const st = s ? s.qty : 0;
+        return `<tr${st > 0 ? ' style="background:rgba(46,160,67,.12);"' : ""}><td>${escUid_(r.channel)}</td><td style="font-family:var(--font-mono); font-weight:700;">${escUid_(r.sku)}</td><td>${escUid_(s ? s.nama : "-")}</td><td style="text-align:center; font-weight:700;">${r.qty}</td><td style="text-align:center;">${stokCell(st)}</td><td>${dueBadge(deadline(r))}${orig}</td><td style="text-align:center;"><button class="btn btn-accent btn-sm" data-done-row="${rows.indexOf(r)}" title="Tandai sudah di-outbound & hapus dari pendingan">✔ Selesai</button></td></tr>`;
+      }).join("");
+    } else {
+      // Per SKU + channel + TANGGAL batas kirim (TikTok sudah -2 hari). Stok gudang dibagi ke semua channel,
+      // dimulai dari batas kirim paling dekat, jadi kolom Kurang menunjukkan pesanan mana yang benar-benar belum tertutup stok.
+      const q = ($("pdSearch").value || "").toLowerCase().trim(), g = {};
+      rows.forEach(r => {
+        const d = deadline(r), day = d == null ? "-" : new Date(new Date(d).setHours(0,0,0,0)).getTime();
+        const k = r.sku.toUpperCase() + "||" + r.channel.toLowerCase() + "||" + day;
+        const o = g[k] = g[k] || { sku: r.sku, ch: r.channel, qty: 0, n: 0, due: null, day };
+        o.qty += r.qty; o.n++; if (d != null && (o.due == null || d < o.due)) o.due = d;
+      });
+      const all = Object.values(g).sort((a, b) => (a.due ?? 9e15) - (b.due ?? 9e15) || a.sku.localeCompare(b.sku) || a.ch.localeCompare(b.ch));
+      const left = {};
+      all.forEach(o => { const k = o.sku.toUpperCase(); if (!(k in left)) left[k] = stock[k] ? stock[k].qty : 0; o.alok = Math.min(left[k], o.qty); left[k] -= o.alok; o.kurang = o.qty - o.alok; });
+      const show = all.filter(o => (chan === "all" || platOf(o.ch) === chan) && (!q || o.sku.toLowerCase().includes(q) || o.ch.toLowerCase().includes(q)));
+      $("pdInfo").innerHTML = `<b>${show.length}</b> baris · <b>${show.reduce((a, o) => a + o.qty, 0)}</b> pcs`;
+      head.innerHTML = `<tr><th>SKU</th><th>Nama Barang</th><th>Channel</th><th>Batas Kirim</th><th style="text-align:center;">Pesanan</th><th style="text-align:center;">Qty Pending</th><th style="text-align:center;">Stok Gudang</th><th style="text-align:center;">Tertutup Stok</th><th style="text-align:center;">Kurang</th><th style="text-align:center;">Aksi</th></tr>`;
+      body.innerHTML = show.map(o => {
+        const s = stock[o.sku.toUpperCase()], st = s ? s.qty : 0;
+        return `<tr${o.alok > 0 ? ' style="background:rgba(46,160,67,.12);"' : ""}><td style="font-family:var(--font-mono); font-weight:700;">${escUid_(o.sku)}</td><td>${escUid_(s ? s.nama : "-")}</td><td>${escUid_(o.ch)}</td><td>${dueBadge(o.due)}</td><td style="text-align:center;">${o.n}</td><td style="text-align:center; font-weight:700;">${o.qty}</td><td style="text-align:center;">${stokCell(st)}</td><td style="text-align:center; font-weight:700; color:var(--success);">${o.alok}</td><td style="text-align:center; font-weight:800; color:${o.kurang > 0 ? "var(--danger)" : "var(--success)"};">${o.kurang > 0 ? "-" + o.kurang : "✓"}</td><td style="text-align:center;"><button class="btn btn-accent btn-sm" data-done-g="1" data-sku="${escUid_(o.sku)}" data-ch="${escUid_(o.ch)}" data-day="${o.day}" data-qty="${o.qty}" title="Tandai sudah di-outbound & hapus dari pendingan">✔ Selesai</button></td></tr>`;
+      }).join("");
+    }
+  }
+  window.renderPendingan = render;
+
+  // ---- Notifikasi barang masuk untuk SKU yang sedang pending ----
+  let prev = null, timer = null;
+  function setNavBadge(n){
+    const nav = $("navPendingan");
+    nav.innerHTML = "⏳ Pendingan" + (n > 0 ? ` <span style="background:#2ea043; color:#fff; border-radius:10px; padding:1px 7px; font-size:10px; font-weight:800; margin-left:4px;" title="${n} SKU pending sudah ada stok">${n} siap</span>` : "");
+  }
+  function showPopup(items){
+    let el = $("pdRestockPop"); if (el) el.remove();
+    el = document.createElement("div"); el.id = "pdRestockPop";
+    el.style.cssText = "position:fixed; right:20px; bottom:20px; z-index:99999; width:380px; max-width:calc(100vw - 40px); background:#fff; color:#1f2d3d; border:2px solid #2ea043; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.3); padding:14px 16px; font-size:13px;";
+    el.innerHTML = `<div style="font-weight:800; font-size:14px; color:#1a7f37; margin-bottom:8px;">📦 Barang Pendingan Sudah Masuk Gudang!</div>
+      <div style="max-height:220px; overflow:auto;">${items.map(i => `<div style="padding:6px 0; border-top:1px solid #e5e9ef;"><b style="font-family:monospace;">${escUid_(i.sku)}</b> ${escUid_(i.nama || "")}<br>Stok: <b style="color:#1a7f37;">${i.stok}</b> · Pending: <b>${i.pending}</b>${i.due != null ? " · Batas kirim: <b>" + fmt(i.due) + "</b>" : ""}</div>`).join("")}</div>
+      <div style="display:flex; gap:8px; margin-top:10px; justify-content:flex-end;">
+        <button class="btn btn-ghost btn-sm" id="pdPopClose">Tutup</button>
+        <button class="btn btn-accent btn-sm" id="pdPopGo">Lihat Pendingan</button></div>`;
+    document.body.appendChild(el);
+    $("pdPopClose").onclick = () => el.remove();
+    $("pdPopGo").onclick = () => { el.remove(); switchTab("pendingan"); };
+    try { const c = new (window.AudioContext || window.webkitAudioContext)(), o = c.createOscillator(); o.connect(c.destination); o.frequency.value = 880; o.start(); o.stop(c.currentTime + .25); } catch(e){}
+  }
+  async function checkRestock(silent){
+    if (!rows.length){ setNavBadge(0); prev = null; return; }
+    const stock = await stockMap(), g = {};
+    rows.forEach(r => { const k = r.sku.toUpperCase(), d = deadline(r), o = g[k] = g[k] || { sku: r.sku, pending: 0, due: null }; o.pending += r.qty; if (d != null && (o.due == null || d < o.due)) o.due = d; });
+    const cur = {}, fresh = [];
+    let ready = 0;
+    Object.keys(g).forEach(k => {
+      const st = stock[k] ? stock[k].qty : 0; cur[k] = st;
+      if (st > 0) ready++;
+      if (!silent && prev && st > (prev[k] || 0) && (prev[k] || 0) === 0) fresh.push({ sku: g[k].sku, nama: stock[k].nama, stok: st, pending: g[k].pending, due: g[k].due });
+    });
+    prev = cur; setNavBadge(ready);
+    if (fresh.length){ showPopup(fresh); toast(`📦 ${fresh.length} SKU pendingan sudah masuk gudang`, "good"); }
+    if (currentActiveTab === "pendingan") render();
+  }
+  const schedule = () => { clearTimeout(timer); timer = setTimeout(() => checkRestock(false).catch(console.error), 900); };
+  // barang masuk (Inbound/Retur) di komputer ini
+  const _rm = recordMovement;
+  recordMovement = async function(ref, type){ const r = await _rm.apply(this, arguments); if (type === "INBOUND" || type === "RETUR") schedule(); return r; };
+  // barang masuk dari perangkat lain (setelah sinkron cloud)
+  const _rf = refreshCurrentTabView;
+  refreshCurrentTabView = function(){ const r = _rf.apply(this, arguments); schedule(); return r; };
+  setTimeout(() => checkRestock(true).catch(()=>{}), 3000); // titik awal tanpa popup
+
+  function setChip(ids, on){ ids.forEach(i => $(i).classList.toggle("on", i === on)); }
+  $("pdChips").addEventListener("click", e => { const b = e.target.closest("[data-chan]"); if (!b) return; chan = b.dataset.chan; render(); });
+  $("pdViewSku").onclick = () => { view = "sku"; setChip(["pdViewSku","pdViewRow"], "pdViewSku"); render(); };
+  $("pdViewRow").onclick = () => { view = "row"; setChip(["pdViewSku","pdViewRow"], "pdViewRow"); render(); };
+  $("pdSearch").addEventListener("input", render);
+
+  // ---- Selesai: barang sudah di-outbound -> hilang dari pendingan ----
+  const dayOf = r => { const d = deadline(r); return d == null ? "-" : String(new Date(new Date(d).setHours(0,0,0,0)).getTime()); };
+  function consume(cands, n){
+    undoSnap = { rows: JSON.parse(JSON.stringify(rows)), ledger: JSON.parse(JSON.stringify(ledger)) };
+    let left = n, done = 0;
+    cands.sort((a, b) => (deadline(a) ?? 9e15) - (deadline(b) ?? 9e15));
+    for (const r of cands){
+      if (left <= 0) break;
+      const t = Math.min(r.qty, left); r.qty -= t; left -= t; done += t;
+      const k = keyOf(r); ledger[k] = (ledger[k] || 0) + t;
+    }
+    rows = rows.filter(r => r.qty > 0); persist(); render(); checkRestock(true);
+    toast(`✔ ${done} pcs ditandai selesai & dihapus dari pendingan`, "good");
+  }
+  $("pdBody").addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.doneRow !== undefined){
+      const r = rows[+b.dataset.doneRow]; if (r) consume([r], r.qty);
+    } else if (b.dataset.doneG){
+      const cands = rows.filter(r => r.sku.toUpperCase() === b.dataset.sku.toUpperCase() && r.channel === b.dataset.ch && dayOf(r) === b.dataset.day);
+      const max = cands.reduce((a, r) => a + r.qty, 0); if (!max) return;
+      const v = prompt(`SKU ${b.dataset.sku} (${b.dataset.ch})\nBerapa pcs yang sudah selesai di-outbound? (maks ${max})`, max);
+      if (v === null) return;
+      const n = Math.min(max, parseInt(v, 10) || 0); if (n <= 0){ toast("Jumlah tidak valid.", "bad"); return; }
+      consume(cands, n);
+    }
+  });
+  $("pdUndo").onclick = () => {
+    if (!undoSnap){ toast("Tidak ada yang bisa dibatalkan.", "bad"); return; }
+    rows = undoSnap.rows; ledger = undoSnap.ledger; undoSnap = null; persist(); render(); checkRestock(true);
+    toast("↩️ Selesai terakhir dibatalkan.", "good");
+  };
+  $("navPendingan").onclick = () => switchTab("pendingan");
+  $("pdUpload").onclick = () => $("pdFile").click();
+
+  $("pdFile").onchange = async e => {
+    const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+    try {
+      const wb = XLSX.read(await f.arrayBuffer(), { type: "array", cellDates: true });
+      const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+      const pick = (o, re) => { const k = Object.keys(o).find(k => re.test(k.trim().toLowerCase())); return k ? o[k] : ""; };
+      const out = data.map(o => ({
+        channel: String(pick(o, /^channel/)).trim(), sku: String(pick(o, /^sku/)).trim(),
+        qty: parseInt(pick(o, /^jumlah|^qty/), 10) || 0, due: toMs(pick(o, /dikirim|batas/))
+      })).filter(r => r.sku && r.qty > 0);
+      if (!out.length){ toast("Tidak ada baris valid. Pastikan kolom: Channel - Nama Toko, SKU Master, Jumlah, Dikirim Sebelum.", "bad"); return; }
+      // pesanan yang sudah ditandai Selesai tidak dimunculkan lagi; catatan yang sudah tidak ada di file baru dibuang
+      const avail = Object.assign({}, ledger), used = {}, kept = [];
+      out.forEach(r => { const k = keyOf(r); let q = r.qty; if ((avail[k] || 0) > 0){ const t = Math.min(q, avail[k]); avail[k] -= t; used[k] = (used[k] || 0) + t; q -= t; } if (q > 0) kept.push(Object.assign({}, r, { qty: q })); });
+      const skipped = Object.values(used).reduce((a, v) => a + v, 0);
+      rows = kept; ledger = used; undoSnap = null; persist();
+      toast(`✓ ${rows.length} pesanan pendingan dimuat.` + (skipped ? ` (${skipped} pcs yang sudah Selesai tidak ditampilkan)` : ""), "good");
+      render(); checkRestock(true);
+    } catch(err){ console.error(err); toast("Gagal membaca file: " + err.message, "bad"); }
+  };
+  $("pdClear").onclick = () => { if (!rows.length || !confirm("Hapus semua data pendingan?")) return; rows = []; try{ localStorage.removeItem(KEY); }catch(e){} render(); checkRestock(true); };
+
+  $("pdExport").onclick = async () => {
+    const list = filtered(), stock = await stockMap();
+    if (!list.length){ toast("Tidak ada data untuk diexport.", "bad"); return; }
+    const aoa = [["Channel - Nama Toko","SKU","Nama Barang","Qty","Stok","Batas Kirim Asli","Batas Kirim (TikTok -2 hari)"]]
+      .concat(list.map(r => { const s = stock[r.sku.toUpperCase()]; return [r.channel, r.sku, s ? s.nama : "", r.qty, s ? s.qty : 0, r.due != null ? fmt(r.due) : "", deadline(r) != null ? fmt(deadline(r)) : ""]; }));
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Pendingan");
+    XLSX.writeFile(wb, `Pendingan_${chan}_${new Date().toISOString().slice(0,10)}.xlsx`);
+  };
 })();
 </script>
 <script id="ux-boost-js">
