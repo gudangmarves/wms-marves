@@ -793,6 +793,15 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
               <div class="hint" style="margin-top:10px;">Item masuk ke Staging dulu (belum tersimpan ke Data Induk). Klik "🚀 Eksekusi Inbound" untuk menyimpan semuanya sekaligus. Pilih gudang tujuan: <b>Gudang Besar</b> (Bin wajib berawalan <b>GB-</b>) atau <b>Gudang RTS</b> (Bin tidak boleh berawalan <b>GB-</b>). Barang baru default ke Gudang Besar, retur default ke Gudang RTS.</div>
               <div id="scanResult"></div>
             </div>
+            <div class="card" id="inBulkCard" style="margin: 12px 0 0 0;">
+              <h3 class="card-header">📥 Upload Inbound Massal (per RFID)</h3>
+              <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px; line-height:1.45;">Kolom Excel: <b>Lokasi, Dokumen, PO, SKU, RFID</b> (satu baris = 1 unit masuk). <b>Lokasi</b> = Bin tujuan, <b>Dokumen</b> = No. Dokumen/Mutasi. Kolom yang kosong memakai isian form di atas. Gudang tujuan dan tipe (Inbound/Retur/Reject) diambil dari form. <b>SKU</b> dipakai bila RFID belum terdaftar di Mapping RFID. Ada pratinjau dulu sebelum masuk ke Staging.</div>
+              <input type="file" id="inBulkFile" accept=".xlsx,.xls,.csv" style="display:none;">
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="btn btn-accent" id="btnInBulkPick" style="flex:1; min-width:180px;">📂 Pilih File Inbound &amp; Pratinjau</button>
+              </div>
+              <div id="inBulkPreview" style="margin-top:10px;"></div>
+            </div>
           </div>
 
           <div style="display: flex; flex-direction: column;">
@@ -3564,6 +3573,138 @@ async function handleScanCore(sku, uid){
   renderInboundLog();
   scanInput.focus();
 }
+
+/* ===== UPLOAD INBOUND MASSAL (pola sama dengan Upload Outbound Massal): pilih file -> pratinjau -> masuk Staging ===== */
+(function initInboundBulk(){
+  const fileEl = document.getElementById("inBulkFile"), pickBtn = document.getElementById("btnInBulkPick"),
+        box = document.getElementById("inBulkPreview");
+  if(!fileEl || !pickBtn) return;
+  let plan = null;
+  const esc = (v) => escUid_(v == null ? "" : v);
+
+  pickBtn.onclick = () => { fileEl.value = ""; fileEl.click(); };
+  fileEl.onchange = () => { const f = fileEl.files[0]; if(f) readFile(f); };
+
+  function readFile(file){
+    box.innerHTML = '<span class="hint">Membaca file & memeriksa data...</span>';
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try{
+        const wb = XLSX.read(evt.target.result, { type: "array" });
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "", raw: false });
+        const hi = rows.findIndex(r => r.some(c => /rfid|uid/i.test(String(c))));
+        if(hi === -1){ box.innerHTML = '<span style="color:var(--danger)">Header tidak ditemukan. Pakai kolom: Lokasi, Dokumen, PO, SKU, RFID.</span>'; return; }
+        const head = rows[hi].map(c => String(c).trim().toLowerCase());
+        const col = (re) => head.findIndex(h => re.test(h));
+        const cBin = col(/^(bin|lokasi)/), cDoc = col(/^(dokumen|no\.? ?dokumen|no\.? ?mutasi|doc)/), cPo = col(/^(no\.? ?)?po$/), cSku = col(/^sku$/), cRfid = col(/rfid|^uid$/);
+        const get = (r, c) => c >= 0 ? String(r[c] == null ? "" : r[c]).trim() : "";
+        const items = [];
+        rows.slice(hi + 1).forEach(r => {
+          const bin = get(r, cBin), doc = get(r, cDoc), po = get(r, cPo), sku = get(r, cSku);
+          get(r, cRfid).split(/[\s,;]+/).map(x => x.trim()).filter(Boolean).forEach(x => items.push({ bin, doc, po, sku, rfid: x }));
+        });
+        if(!items.length){ box.innerHTML = '<span style="color:var(--danger)">Tidak ada baris RFID di file.</span>'; return; }
+        await buildPlan(items, file.name);
+      }catch(e){ console.error(e); box.innerHTML = '<span style="color:var(--danger)">Gagal membaca file: ' + esc(e.message) + '</span>'; }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  async function buildPlan(items, fileName){
+    box.innerHTML = '<span class="hint">Mencocokkan dengan Mapping RFID & Data Induk...</span>';
+    await primeRfidCache();
+    const uidIdx = await getUidIndex();
+    const seen = new Set(sessionInboundScans.filter(s => s.uid).map(s => normUid_(s.uid)));
+    const typeValue = inboundType.value;
+    const whValue = document.getElementById("inWh").value === WH_BESAR ? WH_BESAR : WH_RTS;
+    const defDoc = docNoInput.value.trim().toUpperCase(), defPo = poInput.value.trim().toUpperCase();
+    const returChannelValue = typeValue === "RETUR" ? document.getElementById("returChannel").value : "";
+    const rejectReasonValue = typeValue === "REJECT" ? ((document.getElementById("rejectReasonInput").value || "").trim() || "Tidak disebutkan") : "";
+    const ok = [], bad = [];
+    let unknown = 0, newMapCount = 0;
+    for(const it of items){
+      const U = normUid_(it.rfid);
+      const doc = (it.doc || "").toUpperCase() || defDoc, po = (it.po || "").toUpperCase() || defPo;
+      let rawBin = it.bin, ambBin = false;
+      if(rawBin && /[,;]/.test(rawBin)){ rawBin = ""; ambBin = true; }
+      const bin = typeValue === "REJECT" ? normRejectBin_(rawBin || binInput.value) : (rawBin || binInput.value).trim().toUpperCase();
+      const fail = (m) => bad.push({ it, rfid: U, alasan: m });
+      if(typeValue === "REJECT" && !bin){ fail("Bin / Karung Reject kosong"); continue; }
+      if(whValue !== WH_BESAR && isGBBin_(bin)){ fail(`Bin ${bin} berawalan GB- tapi gudang bukan Gudang Besar`); continue; }
+      if(whValue === WH_BESAR && !isGBBin_(bin)){ fail(`Gudang Besar wajib Bin berawalan GB- (bin: ${bin || "kosong"})`); continue; }
+      if(seen.has(U)){ fail("Duplikat (sudah di staging / dobel di file)"); continue; }
+      const st = uidIdx.get(U);
+      if(st){ fail(`Sudah ada di stok (Bin ${st.bin || "-"})`); continue; }
+      let mapped = RFID_MAP[U] || await idbGetRfid(U), sku, newMap = null;
+      if(mapped){ sku = mapped.sku; }
+      else if(it.sku){
+        const sIn = it.sku.trim().toUpperCase(); const p0 = await idbGetMaster(sIn);
+        sku = (p0 && p0.sku) || sIn; newMap = { code: U, sku, nama: p0 ? (p0.nama || "") : "" }; newMapCount++;
+      }else{ fail("RFID belum terdaftar di Mapping RFID dan kolom SKU kosong"); continue; }
+      const product = await idbGetMaster(sku);
+      if(product && product.sku) sku = product.sku;
+      if(!product) unknown++;
+      seen.add(U);
+      ok.push({ it, uid: U, sku, bin: bin || "-", doc, po, product, newMap, ambBin, ket: (mapped ? "Dari Mapping RFID" : "SKU dari file (RFID didaftarkan)") + (ambBin ? "; lokasi ganda, pakai Bin form" : "") });
+    }
+    plan = { ok, bad, fileName, typeValue, whValue, returChannelValue, rejectReasonValue, unknown, newMapCount };
+    renderPlan();
+  }
+
+  function renderPlan(){
+    const { ok, bad, unknown, whValue, typeValue } = plan;
+    const okRows = ok.slice(0, 60).map(x => `<tr><td>${esc(x.bin)}</td><td>${esc(x.doc || "-")}</td><td>${esc(x.po || "-")}</td><td>${esc(x.sku)}${x.product ? "" : ' <span class="badge bad">N/A</span>'}</td><td>${esc(x.uid)}</td><td style="font-size:10px">${esc(x.ket)}</td></tr>`).join("");
+    const badRows = bad.slice(0, 60).map(x => `<tr><td>${esc(x.it.bin)}</td><td>${esc(x.it.sku)}</td><td>${esc(x.rfid)}</td><td>${esc(x.alasan)}</td></tr>`).join("");
+    box.innerHTML = `
+      <div class="hint" style="margin-bottom:6px;"><b>Tujuan (dari form):</b> ${esc(typeValue)} · ${whValue === WH_BESAR ? "Gudang Besar" : "Gudang RTS"}</div>
+      <div style="display:flex; gap:8px; margin-bottom:8px;">
+        <div class="stat-card" style="margin:0; flex:1;"><div class="num" style="color:var(--success)">${ok.length}</div><div class="lbl">Unit akan masuk Staging</div></div>
+        <div class="stat-card" style="margin:0; flex:1; border-bottom:3px solid var(--danger);"><div class="num" style="color:var(--danger)">${bad.length}</div><div class="lbl">Baris gagal</div></div>
+      </div>
+      ${unknown ? `<div class="hint" style="margin-bottom:6px;">⚠ ${unknown} unit SKU-nya tidak ada di Master (tetap masuk, ditandai N/A).</div>` : ""}
+      ${ok.length ? `<div style="max-height:190px; overflow:auto; margin-bottom:8px;"><table class="table-sm" style="width:100%; font-size:11px;"><thead><tr><th>Bin</th><th>Dokumen</th><th>PO</th><th>SKU</th><th>RFID</th><th>Cara</th></tr></thead><tbody>${okRows}</tbody></table>${ok.length > 60 ? `<div class="hint">…dan ${ok.length - 60} lainnya</div>` : ""}</div>` : ""}
+      ${bad.length ? `<div style="max-height:150px; overflow:auto; margin-bottom:8px;"><table class="table-sm" style="width:100%; font-size:11px;"><thead><tr><th>Bin</th><th>SKU</th><th>RFID</th><th>Alasan</th></tr></thead><tbody>${badRows}</tbody></table>${bad.length > 60 ? `<div class="hint">…dan ${bad.length - 60} lainnya (lihat laporan Excel)</div>` : ""}</div>` : ""}
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-accent" id="btnInBulkGo" ${ok.length ? "" : "disabled"}>✅ Masukkan ke Staging (${ok.length} unit)</button>
+        <button class="btn" id="btnInBulkCancel">Batal</button>
+      </div>`;
+    document.getElementById("btnInBulkCancel").onclick = () => { plan = null; box.innerHTML = ""; };
+    document.getElementById("btnInBulkGo").onclick = commit;
+  }
+
+  async function commit(){
+    if(!plan || !plan.ok.length) return;
+    const btn = document.getElementById("btnInBulkGo"); btn.disabled = true;
+    const stagedNow = new Set(sessionInboundScans.filter(s => s.uid).map(s => normUid_(s.uid)));
+    const report = []; let done = 0, skipped = 0;
+    const maps = plan.ok.filter(x => x.newMap).map(x => x.newMap);
+    if(maps.length){ await idbPutRfidBulk(maps); maps.forEach(m => { RFID_MAP[m.code] = { sku: m.sku, nama: m.nama }; }); }
+    for(const x of plan.ok){
+      if(stagedNow.has(x.uid)){ skipped++; report.push({ Status: "DILEWATI", Lokasi: x.bin, Dokumen: x.doc, PO: x.po, SKU: x.sku, RFID: x.uid, Keterangan: "Sudah masuk staging saat konfirmasi" }); continue; }
+      stagedNow.add(x.uid);
+      const t = plan.typeValue;
+      sessionInboundScans.push({
+        id: generateID(), wh: plan.whValue, sku: x.sku, uid: x.uid, nama: x.product ? x.product.nama : null, found: !!x.product, bin: x.bin, docNo: x.doc, ts: new Date().toISOString(), type: t, returChannel: plan.returChannelValue,
+        remark: (t === "RETUR" ? `Retur Barang (${plan.returChannelValue})` : (t === "REJECT" ? `Inbound Reject: ${plan.rejectReasonValue}` : "Scanned IN")) + (x.po ? ` | PO ${x.po}` : ""),
+        po: x.po || undefined, rejectReason: plan.rejectReasonValue || undefined
+      });
+      done++;
+      report.push({ Status: "MASUK STAGING", Lokasi: x.bin, Dokumen: x.doc, PO: x.po, SKU: x.sku, RFID: x.uid, Keterangan: x.ket });
+    }
+    plan.bad.forEach(x => report.push({ Status: "DITOLAK", Lokasi: x.it.bin, Dokumen: x.it.doc, PO: x.it.po, SKU: x.it.sku, RFID: x.rfid, Keterangan: x.alasan }));
+    const badCount = plan.bad.length + skipped;
+    plan = null;
+    renderInboundLog();
+    box.innerHTML = `<div class="result found"><div class="nama"><b>${done}</b> unit masuk Staging${badCount ? `, <b style="color:var(--danger)">${badCount}</b> baris ditolak/dilewati` : ""}. Klik "🚀 Eksekusi Inbound" untuk menyimpan ke Data Induk.</div>
+      <div style="margin-top:8px;"><button class="btn btn-accent" id="btnInBulkReport">⬇ Unduh Laporan Hasil (Excel)</button></div></div>`;
+    document.getElementById("btnInBulkReport").onclick = () => {
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(report), "Hasil Inbound Massal");
+      XLSX.writeFile(wb, `Hasil_Inbound_Massal_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    };
+    toast(`✓ Inbound massal: ${done} unit masuk Staging` + (badCount ? `, ${badCount} ditolak` : ""), badCount ? "warning" : "good");
+  }
+})();
 
 /* ===== DOKUMEN MUTASI: pencocokan scan Inbound dengan qty dokumen =====
    Dokumen disimpan di browser ini (localStorage). Stok tetap masuk ke Data Induk lewat RFID yang di-scan;
