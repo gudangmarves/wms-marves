@@ -7126,9 +7126,56 @@ function poSet_(po, model, qty){
 }
 // Ambil No. PO dari remark log ("... | PO AN/2610-019"). Dipakai oleh rekap dan koreksi PO.
 function poOfRemark_(remark){ const m = String(remark || "").match(/\|\s*PO\s+(.+?)\s*$/i); return m ? m[1].trim().toUpperCase() : ""; }
+// ---- Penyatuan varian model ke baris PO asli (satu No. PO) ----
+// Model pada data Inbound diturunkan dari nama barang (poModelOf_), jadi varian warna / typo ("Ara Top Baby", "Agatha Drees Carolina")
+// tampil sebagai baris terpisah dari PO asli ("Ara Top", "Agatha Dress"). Resolver ini memetakan model Inbound ke model PO asli
+// pada No. PO yang SAMA. Hanya tampilan rekap yang berubah: stok dan log Inbound tidak disentuh.
+const PO_ALIAS_KEY = "wms_po_alias_v1";
+let poAlias = [];
+try{ poAlias = JSON.parse(localStorage.getItem(PO_ALIAS_KEY) || "[]") || []; }catch(e){ poAlias = []; }
+function poAliasSave_(){ try{ localStorage.setItem(PO_ALIAS_KEY, JSON.stringify(poAlias)); }catch(e){ toast("Gagal menyimpan penggabungan model (penyimpanan browser penuh?)", "bad"); } }
+function poLev1_(a, b){ // true jika jarak edit <= 1
+  if(Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, ed = 0;
+  while(i < a.length && j < b.length){
+    if(a[i] === b[j]){ i++; j++; continue; }
+    if(++ed > 1) return false;
+    if(a.length === b.length){ i++; j++; } else if(a.length > b.length) i++; else j++;
+  }
+  return ed + (a.length - i) + (b.length - j) <= 1;
+}
+// Cari model PO asli yang menjadi "awalan kata" dari model Inbound. Pemenang = awalan terpanjang; seri antar model berbeda => null (tidak ditebak).
+function poPrefixPick_(own, rw, fuzzy){
+  let best = null, bestLen = 0, tie = false;
+  own.forEach(r => {
+    const mw = poNk_(r.model).split(" ");
+    if(mw.length > rw.length) return;
+    let fz = 0;
+    for(let i = 0; i < mw.length; i++){
+      if(mw[i] === rw[i]) continue;
+      if(fuzzy && mw[i].length >= 4 && rw[i].length >= 4 && poLev1_(mw[i], rw[i])){ fz++; continue; }
+      return;
+    }
+    if(fuzzy ? fz !== 1 : fz !== 0) return; // pass 1 = harus persis, pass 2 = tepat 1 kata typo
+    if(mw.length > bestLen){ best = r; bestLen = mw.length; tie = false; }
+    else if(mw.length === bestLen && poNk_(r.model) !== poNk_(best.model)) tie = true;
+  });
+  return (best && !tie) ? best : null;
+}
+function poResolveModel_(po, rawModel){
+  const p = poNk_(po), raw = poNk_(rawModel);
+  const al = poAlias.find(a => a.po === p && poNk_(a.from) === raw);           // 1) gabungan manual Admin
+  if(al) return al.to;
+  const own = poAsli.filter(r => poNk_(r.po) === p);
+  if(!own.length) return rawModel;                                              // PO belum diinput => tetap "Tanpa PO asli"
+  const exact = own.find(r => poNk_(r.model) === raw); if(exact) return exact.model; // 2) sama persis
+  const rw = raw.split(" ");
+  const hit = poPrefixPick_(own, rw, false) || poPrefixPick_(own, rw, true);     // 3) awalan kata, lalu toleransi 1 typo
+  return hit ? hit.model : rawModel;
+}
 function computePoRecap_(moves, scans){
   const map = new Map();
-  const get = (po, model) => { const k = poNk_(po) + "||" + poNk_(model); let o = map.get(k); if(!o){ o = { po: poNk_(po), model, reject: 0, rejectIn: 0, inbound: 0, qtyPo: 0, hasPo: false }; map.set(k, o); } return o; };
+  const get = (po, model) => { model = poResolveModel_(po, model); const k = poNk_(po) + "||" + poNk_(model); let o = map.get(k); if(!o){ o = { po: poNk_(po), model, reject: 0, rejectIn: 0, inbound: 0, qtyPo: 0, hasPo: false }; map.set(k, o); } return o; };
   poAsli.forEach(r => { const o = get(r.po, r.model); o.model = r.model; o.qtyPo += Number(r.qty) || 0; o.hasPo = true; });
   (moves || []).forEach(m => {
     if(!m) return;
@@ -7166,7 +7213,7 @@ function renderPoRecap_(rows){
     const cs = r.selisih === null ? "hint" : (r.selisih < 0 ? "op-selisih-kurang" : (r.selisih > 0 ? "op-selisih-uid" : "op-selisih-ok"));
     const cp = r.pct === null ? "hint" : (r.pct >= 100 ? "op-selisih-ok" : (r.pct >= 50 ? "op-selisih-uid" : "op-selisih-kurang"));
     const st = poStatus_(r);
-    return `<tr><td>${escUid_(r.model)}</td><td style="font-family:var(--font-mono);">${escUid_(r.po)}</td><td style="text-align:center;">${r.reject}</td><td style="text-align:center;">${r.inbound}</td><td style="text-align:center;">${r.qtyPo === null ? "-" : r.qtyPo}</td><td style="text-align:center; font-weight:700;" class="${cs}">${r.selisih === null ? "-" : r.selisih}</td><td style="text-align:center; font-weight:700;" class="${cp}">${r.pct === null ? "-" : r.pct.toFixed(1) + "%"}</td><td style="text-align:center;"><span class="badge ${st[1]}">${st[0]}</span></td><td style="text-align:center; white-space:nowrap;${adm ? "" : " display:none;"}">${r.qtyPo !== null ? `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-edit="${escUid_(r.po)}||${escUid_(r.model)}" title="Edit PO asli baris ini">✏️</button> <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-del="${escUid_(r.po)}||${escUid_(r.model)}" title="Hapus PO asli baris ini (data Inbound tidak terhapus)">✕</button>` : `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-fix="${escUid_(r.po)}||${escUid_(r.model)}" title="Koreksi / lepas No. PO yang salah pada data Inbound (stok tidak berubah, khusus Admin)">🧹</button>`}</td></tr>`;
+    return `<tr><td>${escUid_(r.model)}</td><td style="font-family:var(--font-mono);">${escUid_(r.po)}</td><td style="text-align:center;">${r.reject}</td><td style="text-align:center;">${r.inbound}</td><td style="text-align:center;">${r.qtyPo === null ? "-" : r.qtyPo}</td><td style="text-align:center; font-weight:700;" class="${cs}">${r.selisih === null ? "-" : r.selisih}</td><td style="text-align:center; font-weight:700;" class="${cp}">${r.pct === null ? "-" : r.pct.toFixed(1) + "%"}</td><td style="text-align:center;"><span class="badge ${st[1]}">${st[0]}</span></td><td style="text-align:center; white-space:nowrap;${adm ? "" : " display:none;"}">${r.qtyPo !== null ? `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-edit="${escUid_(r.po)}||${escUid_(r.model)}" title="Edit PO asli baris ini">✏️</button> <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-del="${escUid_(r.po)}||${escUid_(r.model)}" title="Hapus PO asli baris ini (data Inbound tidak terhapus)">✕</button>` : `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-merge="${escUid_(r.po)}||${escUid_(r.model)}" title="Gabungkan ke model PO asli pada No. PO yang sama (hanya tampilan rekap, stok tidak berubah)">🔗</button> <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-po-fix="${escUid_(r.po)}||${escUid_(r.model)}" title="Koreksi / lepas No. PO yang salah pada data Inbound (stok tidak berubah, khusus Admin)">🧹</button>`}</td></tr>`;
   }).join("");
   const tsel = tp ? tdPo - tp : null, tpct = tp ? Math.round(tdPo / tp * 1000) / 10 : null;
   tb.innerHTML = html + `<tr style="font-weight:800; background:var(--bg-input);"><td colspan="2">TOTAL</td><td style="text-align:center;">${tr}</td><td style="text-align:center;">${ti}</td><td style="text-align:center;">${tp || "-"}</td><td style="text-align:center;">${tsel === null ? "-" : tsel}</td><td style="text-align:center;">${tpct === null ? "-" : tpct.toFixed(1) + "%"}</td><td></td>${adm ? "<td></td>" : ""}</tr>`;
@@ -7269,7 +7316,20 @@ async function poFixWrongPo_(po, model){
   loadPoInbound();
 }
 document.getElementById("poRecapBody").addEventListener("click", (e) => {
-  if(!isAdminNow_()){ if(e.target.closest("[data-po-fix],[data-po-edit],[data-po-del]")) toast("Aksi ini hanya bisa diproses oleh Admin.", "bad"); return; }
+  if(!isAdminNow_()){ if(e.target.closest("[data-po-fix],[data-po-merge],[data-po-edit],[data-po-del]")) toast("Aksi ini hanya bisa diproses oleh Admin.", "bad"); return; }
+  const mb = e.target.closest("[data-po-merge]");
+  if(mb){
+    const [mpo, mmodel] = mb.getAttribute("data-po-merge").split("||");
+    const own = poAsli.filter(r => poNk_(r.po) === poNk_(mpo));
+    if(!own.length){ toast("PO asli untuk No. PO " + mpo + " belum diinput. Input dulu PO asli-nya.", "warning"); return; }
+    const pick = prompt(`Gabungkan "${mmodel}" (PO ${mpo}) ke model PO asli:\n\n` + own.map((r, i) => `${i + 1}. ${r.model} (Qty PO ${r.qty})`).join("\n") + `\n\nKetik nomor pilihan. Kosongkan / 0 untuk membatalkan gabungan lama.`, "");
+    if(pick === null) return;
+    const n = parseInt(pick, 10);
+    poAlias = poAlias.filter(a => !(a.po === poNk_(mpo) && poNk_(a.from) === poNk_(mmodel)));
+    if(n >= 1 && n <= own.length){ poAlias.push({ po: poNk_(mpo), from: mmodel, to: own[n - 1].model }); toast(`✓ "${mmodel}" digabung ke "${own[n - 1].model}"`, "good"); }
+    else toast("Gabungan dibatalkan / tidak ada perubahan.", "warning");
+    poAliasSave_(); loadPoInbound(); return;
+  }
   const fb = e.target.closest("[data-po-fix]");
   if(fb){ const [fpo, fmodel] = fb.getAttribute("data-po-fix").split("||"); poFixWrongPo_(fpo, fmodel); return; }
   const eb = e.target.closest("[data-po-edit]");
