@@ -1504,10 +1504,10 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
 
             </div>
             <div class="ma-chips" role="group" aria-label="Tampilan">
-              <button class="ma-chip on" id="pdViewSku">Per SKU</button>
-              <button class="ma-chip" id="pdViewRow">Per Pesanan</button>
+              <button class="ma-chip" id="pdViewSku">Per SKU</button>
+              <button class="ma-chip on" id="pdViewRow">Per Pesanan</button>
             </div>
-            <input type="text" id="pdSearch" class="input-sm toolbar-search" placeholder="🔍 Cari SKU / Nama / Toko..." autocomplete="off">
+            <input type="text" id="pdSearch" class="input-sm toolbar-search" placeholder="🔍 Cari No Pesanan / SKU / Toko..." autocomplete="off">
             <input type="file" id="pdFile" accept=".xlsx,.xls,.csv" style="display:none;">
             <button class="btn btn-accent btn-sm" id="pdUpload">⬆️ Upload Pesanan</button>
             <button class="btn btn-danger btn-sm" id="pdClear" title="Hapus data pendingan">🗑️</button>
@@ -9210,12 +9210,12 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
 /* ============ PENDINGAN (pesanan belum terkirim: filter Shopee / Non-Shopee, TikTok batas kirim -2 hari) ============ */
 (function(){
   const KEY = "wms_pendingan_v1", TIKTOK_MINUS_DAYS = 2, DAY = 864e5;
-  let rows = [], chan = "all", view = "sku";
+  let rows = [], chan = "all", view = "row";
   const KEY_DONE = "wms_pendingan_done_v1";
   let ledger = {}, undoSnap = null;
   try { rows = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch(e){ rows = []; }
   try { ledger = JSON.parse(localStorage.getItem(KEY_DONE) || "{}"); } catch(e){ ledger = {}; }
-  const keyOf = r => r.sku.toUpperCase() + "|" + r.channel.toLowerCase() + "|" + r.due;
+  const keyOf = r => r.ord ? "O|" + String(r.channel).split(" - ")[0].trim().toLowerCase() + "|" + r.ord + "|" + r.sku.toUpperCase() : r.sku.toUpperCase() + "|" + r.channel.toLowerCase() + "|" + r.due;
   const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(rows)); localStorage.setItem(KEY_DONE, JSON.stringify(ledger)); } catch(e){} };
   const $ = id => document.getElementById(id);
   const isShopee = r => /^\s*shopee/i.test(r.channel);
@@ -9261,7 +9261,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   function filtered(){
     const q = ($("pdSearch").value || "").toLowerCase().trim();
     return rows.filter(r => (chan === "all" || platOf(r.channel) === chan) &&
-      (!q || r.sku.toLowerCase().includes(q) || r.channel.toLowerCase().includes(q)));
+      (!q || r.sku.toLowerCase().includes(q) || r.channel.toLowerCase().includes(q) || (r.ord || "").toLowerCase().includes(q)));
   }
 
   async function render(){
@@ -9272,12 +9272,31 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     const totalQty = list.reduce((a, r) => a + r.qty, 0);
     $("pdInfo").innerHTML = `<b>${list.length}</b> pesanan · <b>${totalQty}</b> pcs`;
     if (!list.length){ head.innerHTML = ""; body.innerHTML = `<tr><td class="hint" style="text-align:center; padding:24px;">Tidak ada data pada filter ini.</td></tr>`; return; }
+    const hasOrd = rows.some(r => r.ord);
     if (view === "row"){
-      head.innerHTML = `<tr><th>Channel - Toko</th><th>SKU</th><th>Nama Barang</th><th style="text-align:center;">Qty</th><th style="text-align:center;">Stok</th><th>Batas Kirim</th><th style="text-align:center;">Aksi</th></tr>`;
-      body.innerHTML = list.slice().sort((a, b) => (deadline(a) ?? 9e15) - (deadline(b) ?? 9e15)).map(r => {
-        const s = stock[r.sku.toUpperCase()], orig = isTiktok(r) && r.due != null ? `<div class="hint" style="font-size:10px;">asli ${fmt(r.due)} (−${TIKTOK_MINUS_DAYS} hari)</div>` : "";
-        const st = s ? s.qty : 0;
-        return `<tr${st > 0 ? ' style="background:rgba(46,160,67,.12);"' : ""}><td>${escUid_(r.channel)}</td><td style="font-family:var(--font-mono); font-weight:700;">${escUid_(r.sku)}</td><td>${escUid_(s ? s.nama : "-")}</td><td style="text-align:center; font-weight:700;">${r.qty}</td><td style="text-align:center;">${stokCell(st)}</td><td>${dueBadge(deadline(r))}${orig}</td><td style="text-align:center;"><button class="btn btn-accent btn-sm" data-done-row="${rows.indexOf(r)}" title="Tandai sudah di-outbound & hapus dari pendingan">✔ Selesai</button></td></tr>`;
+      // Per PESANAN: satu baris = satu nomor pesanan (isi SKU-nya digabung). Stok dibagi mulai dari batas kirim paling dekat.
+      const q = ($("pdSearch").value || "").toLowerCase().trim(), og = {}, alok = new Map(), left = {};
+      rows.forEach((r, i) => {
+        const k = r.ord ? platOf(r.channel) + "||" + r.ord : "#" + i, d = deadline(r);
+        const o = og[k] = og[k] || { key: k, ord: r.ord, ch: r.channel, lines: [], due: null, first: i };
+        o.lines.push(r); if (d != null && (o.due == null || d < o.due)) o.due = d;
+      });
+      const all = Object.values(og).sort((a, b) => (a.due ?? 9e15) - (b.due ?? 9e15));
+      all.forEach(o => {
+        let al = 0; o.qty = 0;
+        o.lines.forEach(r => { const k = r.sku.toUpperCase(); if (!(k in left)) left[k] = stock[k] ? stock[k].qty : 0; const t = Math.min(left[k], r.qty); left[k] -= t; alok.set(r, t); al += t; o.qty += r.qty; });
+        o.kurang = o.qty - al;
+      });
+      const show = all.filter(o => (chan === "all" || platOf(o.ch) === chan) && (!q || (o.ord || "").toLowerCase().includes(q) || o.ch.toLowerCase().includes(q) || o.lines.some(r => r.sku.toLowerCase().includes(q))));
+      $("pdInfo").innerHTML = `<b>${show.length}</b> pesanan · <b>${show.reduce((a, o) => a + o.qty, 0)}</b> pcs`;
+      if (!show.length){ head.innerHTML = ""; body.innerHTML = `<tr><td class="hint" style="text-align:center; padding:24px;">Tidak ada data pada filter ini.</td></tr>`; return; }
+      head.innerHTML = `<tr><th>No Pesanan</th><th>Channel</th><th>Batas Kirim</th><th>Isi Pesanan</th><th style="text-align:center;">Qty</th><th style="text-align:center;">Status Stok</th><th style="text-align:center;">Aksi</th></tr>`;
+      body.innerHTML = show.map(o => {
+        const l0 = o.lines[0], orig = isTiktok(l0) && l0.due != null ? `<div class="hint" style="font-size:10px;">asli ${fmt(Math.min(...o.lines.map(r => r.due ?? 9e15)))} (−${TIKTOK_MINUS_DAYS} hari)</div>` : "";
+        const items = o.lines.map(r => { const s = stock[r.sku.toUpperCase()], k = r.qty - alok.get(r); return `<div><b style="font-family:var(--font-mono);">${escUid_(r.sku)}</b> ${escUid_(s ? s.nama : "")} <b>×${r.qty}</b> ${k > 0 ? `<span style="color:var(--danger); font-weight:700;">(kurang ${k})</span>` : "✅"}</div>`; }).join("");
+        const stat = o.kurang === 0 ? `<span class="badge success">✅ Siap</span>` : o.kurang === o.qty ? `<span style="color:var(--danger); font-weight:800;">Kurang -${o.kurang}</span>` : `<span style="color:var(--warning); font-weight:800;">Sebagian -${o.kurang}</span>`;
+        const act = o.ord ? `data-done-ord="${escUid_(o.key)}"` : `data-done-row="${rows.indexOf(l0)}"`;
+        return `<tr${o.kurang === 0 ? ' style="background:rgba(46,160,67,.12);"' : ""}><td style="font-family:var(--font-mono); font-weight:700;">${escUid_(o.ord || "-")}</td><td>${escUid_(o.ch)}</td><td>${dueBadge(o.due)}${orig}</td><td>${items}</td><td style="text-align:center; font-weight:700;">${o.qty}</td><td style="text-align:center;">${stat}</td><td style="text-align:center;"><button class="btn btn-accent btn-sm" ${act} title="Tandai sudah di-outbound & hapus dari pendingan">✔ Selesai</button></td></tr>`;
       }).join("");
     } else {
       // Per SKU + channel + TANGGAL batas kirim (TikTok sudah -2 hari). Stok gudang dibagi ke semua channel,
@@ -9294,10 +9313,10 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       all.forEach(o => { const k = o.sku.toUpperCase(); if (!(k in left)) left[k] = stock[k] ? stock[k].qty : 0; o.alok = Math.min(left[k], o.qty); left[k] -= o.alok; o.kurang = o.qty - o.alok; });
       const show = all.filter(o => (chan === "all" || platOf(o.ch) === chan) && (!q || o.sku.toLowerCase().includes(q) || o.ch.toLowerCase().includes(q)));
       $("pdInfo").innerHTML = `<b>${show.length}</b> baris · <b>${show.reduce((a, o) => a + o.qty, 0)}</b> pcs`;
-      head.innerHTML = `<tr><th>SKU</th><th>Nama Barang</th><th>Channel</th><th>Batas Kirim</th><th style="text-align:center;">Pesanan</th><th style="text-align:center;">Qty Pending</th><th style="text-align:center;">Stok Gudang</th><th style="text-align:center;">Tertutup Stok</th><th style="text-align:center;">Kurang</th><th style="text-align:center;">Aksi</th></tr>`;
+      head.innerHTML = `<tr><th>SKU</th><th>Nama Barang</th><th>Channel</th><th>Batas Kirim</th><th style="text-align:center;">Pesanan</th><th style="text-align:center;">Qty Pending</th><th style="text-align:center;">Stok Gudang</th><th style="text-align:center;">Tertutup Stok</th><th style="text-align:center;">Kurang</th>${hasOrd ? "" : `<th style="text-align:center;">Aksi</th>`}</tr>`;
       body.innerHTML = show.map(o => {
         const s = stock[o.sku.toUpperCase()], st = s ? s.qty : 0;
-        return `<tr${o.alok > 0 ? ' style="background:rgba(46,160,67,.12);"' : ""}><td style="font-family:var(--font-mono); font-weight:700;">${escUid_(o.sku)}</td><td>${escUid_(s ? s.nama : "-")}</td><td>${escUid_(o.ch)}</td><td>${dueBadge(o.due)}</td><td style="text-align:center;">${o.n}</td><td style="text-align:center; font-weight:700;">${o.qty}</td><td style="text-align:center;">${stokCell(st)}</td><td style="text-align:center; font-weight:700; color:var(--success);">${o.alok}</td><td style="text-align:center; font-weight:800; color:${o.kurang > 0 ? "var(--danger)" : "var(--success)"};">${o.kurang > 0 ? "-" + o.kurang : "✓"}</td><td style="text-align:center;"><button class="btn btn-accent btn-sm" data-done-g="1" data-sku="${escUid_(o.sku)}" data-ch="${escUid_(o.ch)}" data-day="${o.day}" data-qty="${o.qty}" title="Tandai sudah di-outbound & hapus dari pendingan">✔ Selesai</button></td></tr>`;
+        return `<tr${o.alok > 0 ? ' style="background:rgba(46,160,67,.12);"' : ""}><td style="font-family:var(--font-mono); font-weight:700;">${escUid_(o.sku)}</td><td>${escUid_(s ? s.nama : "-")}</td><td>${escUid_(o.ch)}</td><td>${dueBadge(o.due)}</td><td style="text-align:center;">${o.n}</td><td style="text-align:center; font-weight:700;">${o.qty}</td><td style="text-align:center;">${stokCell(st)}</td><td style="text-align:center; font-weight:700; color:var(--success);">${o.alok}</td><td style="text-align:center; font-weight:800; color:${o.kurang > 0 ? "var(--danger)" : "var(--success)"};">${o.kurang > 0 ? "-" + o.kurang : "✓"}</td>${hasOrd ? "" : `<td style="text-align:center;"><button class="btn btn-accent btn-sm" data-done-g="1" data-sku="${escUid_(o.sku)}" data-ch="${escUid_(o.ch)}" data-day="${o.day}" data-qty="${o.qty}" title="Tandai sudah di-outbound & hapus dari pendingan">✔ Selesai</button></td>`}</tr>`;
       }).join("");
     }
   }
@@ -9369,7 +9388,10 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   }
   $("pdBody").addEventListener("click", e => {
     const b = e.target.closest("button"); if (!b) return;
-    if (b.dataset.doneRow !== undefined){
+    if (b.dataset.doneOrd !== undefined){
+      const cands = rows.filter(r => r.ord && platOf(r.channel) + "||" + r.ord === b.dataset.doneOrd);
+      if (cands.length) consume(cands, cands.reduce((a, r) => a + r.qty, 0));
+    } else if (b.dataset.doneRow !== undefined){
       const r = rows[+b.dataset.doneRow]; if (r) consume([r], r.qty);
     } else if (b.dataset.doneG){
       const cands = rows.filter(r => r.sku.toUpperCase() === b.dataset.sku.toUpperCase() && r.channel === b.dataset.ch && dayOf(r) === b.dataset.day);
@@ -9396,6 +9418,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       const pick = (o, re) => { const k = Object.keys(o).find(k => re.test(k.trim().toLowerCase())); return k ? o[k] : ""; };
       const out = data.map(o => ({
         channel: String(pick(o, /^channel/)).trim(), sku: String(pick(o, /^sku/)).trim(),
+        ord: String(pick(o, /(no\.?|nomor|id|kode)\s*(pesanan|order|invoice)|order\s*(id|no|number|sn)|^(pesanan|order|invoice)$|invoice/)).trim(),
         qty: parseInt(pick(o, /^jumlah|^qty/), 10) || 0, due: toMs(pick(o, /dikirim|batas/))
       })).filter(r => r.sku && r.qty > 0);
       if (!out.length){ toast("Tidak ada baris valid. Pastikan kolom: Channel - Nama Toko, SKU Master, Jumlah, Dikirim Sebelum.", "bad"); return; }
@@ -9404,7 +9427,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       out.forEach(r => { const k = keyOf(r); let q = r.qty; if ((avail[k] || 0) > 0){ const t = Math.min(q, avail[k]); avail[k] -= t; used[k] = (used[k] || 0) + t; q -= t; } if (q > 0) kept.push(Object.assign({}, r, { qty: q })); });
       const skipped = Object.values(used).reduce((a, v) => a + v, 0);
       rows = kept; ledger = used; undoSnap = null; persist();
-      toast(`✓ ${rows.length} pesanan pendingan dimuat.` + (skipped ? ` (${skipped} pcs yang sudah Selesai tidak ditampilkan)` : ""), "good");
+      toast(`✓ ${rows.length} pesanan pendingan dimuat.` + (skipped ? ` (${skipped} pcs yang sudah Selesai tidak ditampilkan)` : "") + (rows.some(r => r.ord) ? "" : " ⚠ Kolom No Pesanan tidak ditemukan di file, jadi ditampilkan per baris."), "good");
       render(); checkRestock(true);
     } catch(err){ console.error(err); toast("Gagal membaca file: " + err.message, "bad"); }
   };
@@ -9413,8 +9436,8 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   $("pdExport").onclick = async () => {
     const list = filtered(), stock = await stockMap();
     if (!list.length){ toast("Tidak ada data untuk diexport.", "bad"); return; }
-    const aoa = [["Channel - Nama Toko","SKU","Nama Barang","Qty","Stok","Batas Kirim Asli","Batas Kirim (TikTok -2 hari)"]]
-      .concat(list.map(r => { const s = stock[r.sku.toUpperCase()]; return [r.channel, r.sku, s ? s.nama : "", r.qty, s ? s.qty : 0, r.due != null ? fmt(r.due) : "", deadline(r) != null ? fmt(deadline(r)) : ""]; }));
+    const aoa = [["No Pesanan","Channel - Nama Toko","SKU","Nama Barang","Qty","Stok","Batas Kirim Asli","Batas Kirim (TikTok -2 hari)"]]
+      .concat(list.map(r => { const s = stock[r.sku.toUpperCase()]; return [r.ord || "", r.channel, r.sku, s ? s.nama : "", r.qty, s ? s.qty : 0, r.due != null ? fmt(r.due) : "", deadline(r) != null ? fmt(deadline(r)) : ""]; }));
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Pendingan");
     XLSX.writeFile(wb, `Pendingan_${chan}_${new Date().toISOString().slice(0,10)}.xlsx`);
   };
