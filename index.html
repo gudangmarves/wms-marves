@@ -7901,6 +7901,8 @@ async function loadMovements(filterSku = "", startDate = "", endDate = "") {
             aksiHtml = `<span class="badge muted" title="Dikembalikan oleh ${escUid_(r.revertedBy || '-')} pada ${r.revertedAt ? new Date(r.revertedAt).toLocaleString('id-ID') : '-'}">↩ DIKEMBALIKAN</span>`;
         } else if (r.type === 'OUTBOUND' && !isOpnameMove && r.ref_id && isAdminNow_()) {
             aksiHtml = `<button class="btn btn-ghost btn-sm" data-mv-undo="${escUid_(r.id)}" title="Kembalikan unit ke Bin awal (khusus Admin)">↩ Kembalikan</button>`;
+        } else if ((r.type === 'INBOUND' || r.type === 'REJECT') && !isOpnameMove && !r.reverted && isAdminNow_()) {
+            aksiHtml = `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-mv-po="${escUid_(r.id)}" title="Edit No. PO pada log Inbound ini (stok tidak berubah, khusus Admin)">✏️ PO</button>`;
         }
         if (r.reverted) tr.style.opacity = "0.55";
 
@@ -7956,7 +7958,62 @@ async function undoOutboundMovement_(moveId){
       `Batal Outbound ${m.ts ? new Date(m.ts).toLocaleString("id-ID") : ""}${m.remark ? " (" + m.remark + ")" : ""}`, m.docNo || "", m.uid);
   toast(`✓ ${m.sku}${U ? " (" + U + ")" : ""} dikembalikan ke Bin ${bin}`, "good");
 }
+/* ---- Edit No. PO pada log Inbound (Tracking Movement): khusus Admin ----
+   Hanya mengubah tag " | PO xxx" pada remark log (movement) dan baris stok yang sesuai (scan, id = ref_id log).
+   Jumlah stok, Bin, SKU, RFID tidak berubah. Pilihan ruang lingkup: baris ini saja, atau semua log dengan PO + model yang sama. */
+async function editMovementPo_(moveId){
+  if(!isAdminNow_()){ toast("Hanya Admin yang bisa mengedit No. PO pada data Inbound.", "bad"); return; }
+  const moves = await idbGetAllMovements();
+  const m = moves.find(x => x && x.id === moveId);
+  if(!m || (m.type !== "INBOUND" && m.type !== "REJECT")){ toast("Log Inbound tidak ditemukan.", "bad"); return; }
+  if(m.reverted){ toast("Log ini sudah dibatalkan, tidak bisa diedit.", "warning"); return; }
+  if(String(m.ref_id || "").startsWith("OPNAME_")){ toast("Penyesuaian Stock Opname tidak punya No. PO.", "warning"); return; }
+  const oldPo = poOfRemark_(m.remark);
+  const modelKey = poNk_(poModelOf_(m.nama));
+  const isInb = (x) => x && !x.reverted && (x.type === "INBOUND" || x.type === "REJECT") && !String(x.ref_id || "").startsWith("OPNAME_");
+  const group = oldPo ? moves.filter(x => isInb(x) && poOfRemark_(x.remark) === oldPo && poNk_(poModelOf_(x.nama)) === modelKey) : [m];
+  const ans = prompt(`Edit No. PO\n\nSKU: ${m.sku || "-"}\nNama: ${m.nama || "-"}\nNo. PO sekarang: ${oldPo || "(kosong)"}\n\nIsi No. PO yang BENAR.\nKosongkan untuk melepas No. PO.\n\n(Jumlah stok barang TIDAK berubah.)`, oldPo);
+  if(ans === null) return;
+  const newPo = poNk_(ans).replace(/[<>"'`\\|]/g, "");
+  if(newPo === oldPo){ toast("No. PO baru sama dengan yang lama.", "warning"); return; }
+  let targets = [m];
+  if(group.length > 1){
+    const sc = prompt(`Ada ${group.length} log Inbound dengan PO ${oldPo} dan model "${poModelOf_(m.nama)}".\n\nBerlaku untuk?\n1 = baris ini saja\n2 = semua ${group.length} log tersebut\n\nKetik 1 atau 2 (batal = klik Cancel).`, "1");
+    if(sc === null) return;
+    if(String(sc).trim() === "2") targets = group;
+    else if(String(sc).trim() !== "1"){ toast("Pilihan tidak valid, tidak ada yang diubah.", "warning"); return; }
+  }
+  if(!confirm(newPo ? `Ubah No. PO ${oldPo || "(kosong)"} menjadi ${newPo} pada ${targets.length} log Inbound?` : `Lepas No. PO ${oldPo} dari ${targets.length} log Inbound?\n\nBarang tetap ada di stok.`)) return;
+  const tag = /\s*\|\s*PO\s+.+?\s*$/i;
+  const suffix = newPo ? ` | PO ${newPo}` : "";
+  const now = new Date().toISOString(), by = curBy_();
+  const scanById = new Map((await idbGetAllScans()).filter(Boolean).map(r => [r.id, r]));
+  const mvOut = [], scOut = [];
+  targets.forEach(t => {
+    t.remark = String(t.remark || "").replace(tag, "") + suffix;
+    t.poEditedFrom = t.poEditedFrom || oldPo || "-"; t.poEditedBy = by; t.poEditedAt = now;
+    mvOut.push(t);
+    const r = t.ref_id ? scanById.get(t.ref_id) : null;
+    if(r){ r.remark = String(r.remark || "").replace(tag, "") + suffix; r.po = newPo || undefined; scOut.push(r); }
+  });
+  await idbAddMovementBulk(mvOut);
+  await idbAddScanBulk(scOut);
+  await recordMovement("PO_FIX_" + Date.now(), "PO_KOREKSI", "-", "Koreksi No. PO", "-",
+    `Edit No. PO dari Tracking Movement: ${oldPo || "(kosong)"} → ${newPo || "(dilepas)"}; ${mvOut.length} log, ${scOut.length} baris stok`);
+  try{ invalidateUidIndex(); }catch(e){}
+  toast(newPo ? `✓ No. PO ${newPo} disimpan pada ${mvOut.length} log` : `✓ No. PO dilepas dari ${mvOut.length} log`, "good");
+}
 document.getElementById("movementBody").addEventListener("click", async (e) => {
+  const pb = e.target.closest("[data-mv-po]");
+  if(pb){
+    pb.disabled = true;
+    try{
+      await editMovementPo_(pb.dataset.mvPo);
+      loadMovements(document.getElementById("moveSearchSku").value, document.getElementById("moveStartDate").value, document.getElementById("moveEndDate").value);
+    }catch(err){ console.error(err); toast("Gagal mengedit No. PO: " + err.message, "bad"); }
+    pb.disabled = false;
+    return;
+  }
   const btn = e.target.closest("[data-mv-undo]");
   if(!btn) return;
   btn.disabled = true;
