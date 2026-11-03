@@ -517,7 +517,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
 [data-i=camera]{--ic:#ea580c}[data-i=upload]{--ic:#7c3aed}[data-i=refresh]{--ic:#0284c7}[data-i=clip]{--ic:#16a34a}
 [data-i=shuffle]{--ic:#db2777}[data-i=search]{--ic:#0891b2}[data-i=chart]{--ic:#2563eb}[data-i=history]{--ic:#9333ea}
 [data-i=scale]{--ic:#ca8a04}[data-i=trend]{--ic:#059669}[data-i=monitor]{--ic:#4f46e5}[data-i=lock]{--ic:#d97706}
-[data-i=hourglass]{--ic:#c026d3}[data-i=globe]{--ic:#0d9488}[data-i=package]{--ic:#c2410c}[data-i=tag]{--ic:#e11d48}[data-i=qr]{--ic:#475569}[data-i=users]{--ic:#f97316}[data-i=doc]{--ic:#0369a1}
+[data-i=globe]{--ic:#0d9488}[data-i=package]{--ic:#c2410c}[data-i=tag]{--ic:#e11d48}[data-i=qr]{--ic:#475569}[data-i=users]{--ic:#f97316}[data-i=doc]{--ic:#0369a1}
 .ico{color:var(--ic,var(--accent))}
 /* isi duotone lembut pada bentuk tertutup */
 .ico svg rect,.ico svg circle,[data-i=camera] path,[data-i=package] path,[data-i=tag] path{fill:currentColor;fill-opacity:.16}
@@ -530,11 +530,6 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
 .nav-item:hover [data-i=camera] path,.nav-item.active [data-i=camera] path,.nav-item:hover [data-i=package] path,.nav-item.active [data-i=package] path,
 .nav-item:hover [data-i=tag] path,.nav-item.active [data-i=tag] path{fill-opacity:.28}
 .nav-item.locked .ico{--ic:#d97706}
-/* Pendingan: ikon jam pasir + badge "siap" */
-[data-i=hourglass] path{fill:currentColor;fill-opacity:.16}
-.nav-item:hover [data-i=hourglass] path,.nav-item.active [data-i=hourglass] path{fill-opacity:.28}
-.nav-item:hover [data-i=hourglass] svg{transform:rotate(180deg) scale(1.1)}
-.nav-item .nav-badge{flex:0 0 auto;background:#2ea043;color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:800;line-height:1.5;white-space:nowrap}
 /* bar atas: tetap putih agar kontras di latar biru, tetapi chip berwarna saat hover */
 .shell-icon .ico{color:#fff;width:20px;height:20px;background:none;box-shadow:none;padding:0}
 .shell-icon:hover [data-i=settings]{color:#fde68a}.shell-icon:hover [data-i=logout]{color:#fecaca}.shell-icon:hover [data-i=stop]{color:#fecaca}
@@ -1528,6 +1523,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
             <button class="btn btn-ghost btn-sm" id="pdUndo" title="Batalkan 'Selesai' terakhir">↩️ Undo</button>
             <div class="toolbar-spacer"></div>
             <span class="toolbar-count" id="pdInfo"></span>
+            <button class="btn btn-ghost btn-sm" id="pdExportDone" title="Unduh riwayat semua pesanan yang sudah diklik Selesai (untuk dicek ulang)">📋 Export Selesai <b id="pdDoneCount">0</b></button>
             <button class="btn btn-ghost btn-sm" id="pdExport">⬇️ Export</button>
           </div>
           <div class="hint" style="margin-bottom:8px;">Batas kirim pesanan <b>TikTok dikurangi 2 hari</b> dari kolom "Dikirim Sebelum". Stok diambil dari stok fisik gudang (tanpa unit reject). Setelah barang keluar lewat Outbound, klik <b>✔ Selesai</b> untuk menghapusnya dari daftar pendingan.</div>
@@ -9359,10 +9355,13 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   let rows = [], chan = "all", view = "row";
   const KEY_DONE = "wms_pendingan_done_v1";
   let ledger = {}, undoSnap = null;
+  const KEY_LOG = "wms_pendingan_donelog_v1"; // riwayat permanen semua klik Selesai (tidak ikut terhapus saat upload ulang)
+  let doneLog = [];
+  try { doneLog = JSON.parse(localStorage.getItem(KEY_LOG) || "[]"); } catch(e){ doneLog = []; }
   try { rows = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch(e){ rows = []; }
   try { ledger = JSON.parse(localStorage.getItem(KEY_DONE) || "{}"); } catch(e){ ledger = {}; }
   const keyOf = r => r.ord ? "O|" + String(r.channel).split(" - ")[0].trim().toLowerCase() + "|" + r.ord + "|" + r.sku.toUpperCase() : r.sku.toUpperCase() + "|" + r.channel.toLowerCase() + "|" + r.due;
-  const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(rows)); localStorage.setItem(KEY_DONE, JSON.stringify(ledger)); } catch(e){} };
+  const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(rows)); localStorage.setItem(KEY_DONE, JSON.stringify(ledger)); localStorage.setItem(KEY_LOG, JSON.stringify(doneLog)); } catch(e){} const c = document.getElementById("pdDoneCount"); if (c) c.textContent = doneLog.length; };
   const $ = id => document.getElementById(id);
   const isShopee = r => /^\s*shopee/i.test(r.channel);
   const platOf = c => (String(c).split(" - ")[0] || String(c)).trim().toLowerCase();
@@ -9472,12 +9471,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   let prev = null, timer = null;
   function setNavBadge(n){
     const nav = $("navPendingan");
-    if (!nav) return;
-    let bd = nav.querySelector(".nav-badge");
-    if (n > 0){
-      if (!bd){ bd = document.createElement("span"); bd.className = "nav-badge"; nav.appendChild(bd); }
-      bd.textContent = n + " siap"; bd.title = n + " SKU pending sudah ada stok";
-    } else if (bd) bd.remove();
+    nav.innerHTML = "⏳ Pendingan" + (n > 0 ? ` <span style="background:#2ea043; color:#fff; border-radius:10px; padding:1px 7px; font-size:10px; font-weight:800; margin-left:4px;" title="${n} SKU pending sudah ada stok">${n} siap</span>` : "");
   }
   function showPopup(items){
     let el = $("pdRestockPop"); if (el) el.remove();
@@ -9526,13 +9520,14 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   // ---- Selesai: barang sudah di-outbound -> hilang dari pendingan ----
   const dayOf = r => { const d = deadline(r); return d == null ? "-" : String(new Date(new Date(d).setHours(0,0,0,0)).getTime()); };
   function consume(cands, n){
-    undoSnap = { rows: JSON.parse(JSON.stringify(rows)), ledger: JSON.parse(JSON.stringify(ledger)) };
-    let left = n, done = 0;
+    undoSnap = { rows: JSON.parse(JSON.stringify(rows)), ledger: JSON.parse(JSON.stringify(ledger)), logLen: doneLog.length };
+    let left = n, done = 0; const now = Date.now(), who = ((curUser_() || {}).name) || "";
     cands.sort((a, b) => (deadline(a) ?? 9e15) - (deadline(b) ?? 9e15));
     for (const r of cands){
       if (left <= 0) break;
       const t = Math.min(r.qty, left); r.qty -= t; left -= t; done += t;
       const k = keyOf(r); ledger[k] = (ledger[k] || 0) + t;
+      doneLog.push({ t: now, ord: r.ord || "", channel: r.channel, sku: r.sku, qty: t, due: r.due, dl: deadline(r), by: who });
     }
     rows = rows.filter(r => r.qty > 0); persist(); render(); checkRestock(true);
     toast(`✔ ${done} pcs ditandai selesai & dihapus dari pendingan`, "good");
@@ -9555,7 +9550,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   });
   $("pdUndo").onclick = () => {
     if (!undoSnap){ toast("Tidak ada yang bisa dibatalkan.", "bad"); return; }
-    rows = undoSnap.rows; ledger = undoSnap.ledger; undoSnap = null; persist(); render(); checkRestock(true);
+    rows = undoSnap.rows; ledger = undoSnap.ledger; doneLog.length = Math.min(doneLog.length, undoSnap.logLen); undoSnap = null; persist(); render(); checkRestock(true);
     toast("↩️ Selesai terakhir dibatalkan.", "good");
   };
   $("navPendingan").onclick = () => switchTab("pendingan");
@@ -9583,6 +9578,22 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     } catch(err){ console.error(err); toast("Gagal membaca file: " + err.message, "bad"); }
   };
   $("pdClear").onclick = () => { if (!rows.length || !confirm("Hapus semua data pendingan?")) return; rows = []; try{ localStorage.removeItem(KEY); }catch(e){} render(); checkRestock(true); };
+
+  $("pdDoneCount").textContent = doneLog.length;
+  $("pdExportDone").onclick = () => {
+    if (!doneLog.length){ toast("Belum ada riwayat Selesai. Riwayat mulai tercatat dari klik Selesai berikutnya.", "bad"); return; }
+    const aoa = [["Waktu Selesai","No Pesanan","Channel - Nama Toko","SKU","Qty","Batas Kirim Asli","Batas Kirim (TikTok -2 hari)","Diselesaikan Oleh"]]
+      .concat(doneLog.slice().sort((a, b) => b.t - a.t).map(l => [fmt(l.t), l.ord || "", l.channel, l.sku, l.qty, l.due != null ? fmt(l.due) : "", l.dl != null ? fmt(l.dl) : "", l.by || ""]));
+    const byOrd = {};
+    doneLog.forEach(l => { const k = (l.ord || "(tanpa no pesanan)") + "||" + l.channel; const o = byOrd[k] = byOrd[k] || { ord: l.ord || "", ch: l.channel, qty: 0, sku: new Set(), t: l.t }; o.qty += l.qty; o.sku.add(l.sku); if (l.t > o.t) o.t = l.t; });
+    const rekap = [["No Pesanan","Channel - Nama Toko","Jumlah SKU","Total Qty","Terakhir Selesai"]]
+      .concat(Object.values(byOrd).sort((a, b) => b.t - a.t).map(o => [o.ord, o.ch, o.sku.size, o.qty, fmt(o.t)]));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Detail Selesai");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rekap), "Rekap per Pesanan");
+    XLSX.writeFile(wb, `Pendingan_SELESAI_${new Date().toISOString().slice(0,10)}.xlsx`);
+    toast(`✓ Export ${doneLog.length} baris riwayat Selesai`, "good");
+  };
 
   $("pdExport").onclick = async () => {
     const list = filtered(), stock = await stockMap();
@@ -9615,7 +9626,6 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     tag:'<path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r=".6" fill="currentColor"/>',
     qr:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 14v.01M14 21h.01M17 21h4v-4"/>',
     users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
-    hourglass:'<path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/>',
     panel:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
     stop:'<path d="M7.86 2h8.28L22 7.86v8.28L16.14 22H7.86L2 16.14V7.86z"/><path d="m15 9-6 6M9 9l6 6"/>',
     settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
@@ -9623,16 +9633,15 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>'
   };
   var E={"📷":"camera","📤":"upload","🔄":"refresh","📋":"clip","🔀":"shuffle","🔎":"search","📊":"chart","📜":"history",
-    "⚖":"scale","📈":"trend","🖥":"monitor","🔒":"lock","🌍":"globe","📦":"package","🏷":"tag","🔳":"qr","👥":"users","⏳":"hourglass"};
+    "⚖":"scale","📈":"trend","🖥":"monitor","🔒":"lock","🌍":"globe","📦":"package","🏷":"tag","🔳":"qr","👥":"users"};
   var IDS={btnToggleSidebar:"panel",btnCancelSync:"stop",btnCloudSettings:"settings",btnLogout:"logout"};
   function svg(n){return '<span class="ico" data-i="'+n+'" aria-hidden="true"><svg viewBox="0 0 24 24">'+P[n]+'</svg></span>';}
 
   function navItem(b){
     if(b.firstElementChild&&b.firstElementChild.classList.contains("ico"))return;
-    var ob=b.querySelector(".nav-badge"), bh=ob?ob.outerHTML:"", c=b.cloneNode(true), cb=c.querySelector(".nav-badge"); if(cb)cb.remove();
-    var t=c.textContent.replace(/\uFE0F/g,"").trim(), m=t.match(/^(\S+)\s+([\s\S]*)$/);
+    var t=b.textContent.replace(/\uFE0F/g,"").trim(), m=t.match(/^(\S+)\s+([\s\S]*)$/);
     if(!m)return; var n=E[m[1]]; if(!n)return; if(b.id==="navHistoryCCTF")n="doc";
-    b.innerHTML=svg(n)+'<span class="lbl-t">'+m[2].replace(/</g,"&lt;")+'</span>'+bh;
+    b.innerHTML=svg(n)+'<span class="lbl-t">'+m[2].replace(/</g,"&lt;")+'</span>';
     b.title=m[2];
   }
   function decorate(){
