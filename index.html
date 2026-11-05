@@ -9365,23 +9365,25 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   const KEY = "wms_pendingan_v1", TIKTOK_MINUS_DAYS = 2, DAY = 864e5;
   let rows = [], chan = "all", view = "row";
   const KEY_DONE = "wms_pendingan_done_v1";
-  let ledger = {}, undoSnap = null;
+  let ledger = {}, undoSnap = null, hold = {}; // hold: stok yang sudah dipakai lewat tombol Selesai tapi belum terpotong di Data Induk { SKU: {n, last} }
   const KEY_LOG = "wms_pendingan_donelog_v1"; // riwayat permanen semua klik Selesai (tidak ikut terhapus saat upload ulang)
   let doneLog = [];
   try { doneLog = JSON.parse(localStorage.getItem(KEY_LOG) || "[]"); } catch(e){ doneLog = []; }
   try { rows = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch(e){ rows = []; }
   try { ledger = JSON.parse(localStorage.getItem(KEY_DONE) || "{}"); } catch(e){ ledger = {}; }
+  const KEY_HOLD = "wms_pendingan_hold_v1";
+  try { hold = JSON.parse(localStorage.getItem(KEY_HOLD) || "{}") || {}; } catch(e){ hold = {}; }
   const keyOf = r => r.ord ? "O|" + String(r.channel).split(" - ")[0].trim().toLowerCase() + "|" + r.ord + "|" + r.sku.toUpperCase() : r.sku.toUpperCase() + "|" + r.channel.toLowerCase() + "|" + r.due;
   const TS_KEY = "wms_pendingan_ts_v1", PART_SIZE = 150000;
   let localTs = Number(localStorage.getItem(TS_KEY) || 0), pushChain = Promise.resolve();
-  const persist = () => { localTs = Date.now(); try { localStorage.setItem(KEY, JSON.stringify(rows)); localStorage.setItem(KEY_DONE, JSON.stringify(ledger)); localStorage.setItem(KEY_LOG, JSON.stringify(doneLog)); localStorage.setItem(TS_KEY, String(localTs)); } catch(e){} const c = document.getElementById("pdDoneCount"); if (c) c.textContent = doneLog.length; pushCloud(); };
+  const persist = () => { localTs = Date.now(); try { localStorage.setItem(KEY, JSON.stringify(rows)); localStorage.setItem(KEY_DONE, JSON.stringify(ledger)); localStorage.setItem(KEY_HOLD, JSON.stringify(hold)); localStorage.setItem(KEY_LOG, JSON.stringify(doneLog)); localStorage.setItem(TS_KEY, String(localTs)); } catch(e){} const c = document.getElementById("pdDoneCount"); if (c) c.textContent = doneLog.length; pushCloud(); };
 
   /* ---- Sinkron cloud: data Pendingan (rows + ledger Selesai + riwayat Selesai) disalin ke tabel masterbin
      (awalan "pdg|") seperti akun, jadi tidak perlu mengubah server. Data dipecah jadi potongan teks "pdg|p|N"
      + satu baris "pdg|meta" berisi stempel waktu; versi dengan ts terbesar yang dipakai semua komputer. ---- */
   const idbGet_ = (t, k) => new Promise(res => { try { const rq = idb.transaction(t, "readonly").objectStore(t).get(k); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null); } catch(e){ res(null); } });
   function pushCloud(){
-    const snap = JSON.stringify({ rows, ledger, log: doneLog }), ts = localTs;
+    const snap = JSON.stringify({ rows, ledger, log: doneLog, hold }), ts = localTs;
     pushChain = pushChain.then(async () => {
       if (!idb) return;
       const parts = []; for (let i = 0; i === 0 || i < snap.length; i += PART_SIZE) parts.push(snap.slice(i, i + PART_SIZE));
@@ -9412,8 +9414,9 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     rows = st.rows.filter(r => r && typeof r.sku === "string" && typeof r.channel === "string" && r.qty > 0);
     ledger = (st.ledger && typeof st.ledger === "object" && !Array.isArray(st.ledger)) ? st.ledger : {};
     if (Array.isArray(st.log)) doneLog = st.log;
+    hold = (st.hold && typeof st.hold === "object" && !Array.isArray(st.hold)) ? st.hold : {};
     localTs = cts; undoSnap = null;
-    try { localStorage.setItem(KEY, JSON.stringify(rows)); localStorage.setItem(KEY_DONE, JSON.stringify(ledger)); localStorage.setItem(KEY_LOG, JSON.stringify(doneLog)); localStorage.setItem(TS_KEY, String(cts)); } catch(e){}
+    try { localStorage.setItem(KEY, JSON.stringify(rows)); localStorage.setItem(KEY_DONE, JSON.stringify(ledger)); localStorage.setItem(KEY_HOLD, JSON.stringify(hold)); localStorage.setItem(KEY_LOG, JSON.stringify(doneLog)); localStorage.setItem(TS_KEY, String(cts)); } catch(e){}
     const dc = document.getElementById("pdDoneCount"); if (dc) dc.textContent = doneLog.length;
     if (currentActiveTab === "pendingan") render();
     checkRestock(true);
@@ -9455,6 +9458,17 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
         (m[k] = m[k] || { qty: 0, nama: "" }).qty++;
         if (!m[k].nama && r.nama) m[k].nama = r.nama;
       });
+      // Kurangi stok dengan qty yang sudah di-Selesai-kan. Jika kemudian stok fisik turun karena Outbound sungguhan,
+      // pengurang ikut berkurang sebesar penurunan itu supaya barang yang sama tidak terpotong dua kali.
+      let changed = false;
+      Object.keys(hold).forEach(k => {
+        const h = hold[k], phys = m[k] ? m[k].qty : 0;
+        if (h.last == null){ h.last = phys; changed = true; }
+        else if (phys !== h.last){ if (phys < h.last) h.n = Math.max(0, h.n - (h.last - phys)); h.last = phys; changed = true; }
+        if (h.n <= 0){ delete hold[k]; changed = true; return; }
+        if (m[k]) m[k].qty = Math.max(0, phys - h.n);
+      });
+      if (changed) persist();
     } catch(e){ console.error(e); }
     return m;
   }
@@ -9581,13 +9595,14 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   // ---- Selesai: barang sudah di-outbound -> hilang dari pendingan ----
   const dayOf = r => { const d = deadline(r); return d == null ? "-" : String(new Date(new Date(d).setHours(0,0,0,0)).getTime()); };
   function consume(cands, n){
-    undoSnap = { rows: JSON.parse(JSON.stringify(rows)), ledger: JSON.parse(JSON.stringify(ledger)), logLen: doneLog.length };
+    undoSnap = { rows: JSON.parse(JSON.stringify(rows)), ledger: JSON.parse(JSON.stringify(ledger)), hold: JSON.parse(JSON.stringify(hold)), logLen: doneLog.length };
     let left = n, done = 0; const now = Date.now(), who = ((curUser_() || {}).name) || "";
     cands.sort((a, b) => (deadline(a) ?? 9e15) - (deadline(b) ?? 9e15));
     for (const r of cands){
       if (left <= 0) break;
       const t = Math.min(r.qty, left); r.qty -= t; left -= t; done += t;
       const k = keyOf(r); ledger[k] = (ledger[k] || 0) + t;
+      const sk = r.sku.toUpperCase(); (hold[sk] = hold[sk] || { n: 0, last: null }).n += t; // stok langsung berkurang di Pendingan
       doneLog.push({ t: now, ord: r.ord || "", channel: r.channel, sku: r.sku, qty: t, due: r.due, dl: deadline(r), by: who });
     }
     rows = rows.filter(r => r.qty > 0); persist(); render(); checkRestock(true);
@@ -9611,7 +9626,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   });
   $("pdUndo").onclick = () => {
     if (!undoSnap){ toast("Tidak ada yang bisa dibatalkan.", "bad"); return; }
-    rows = undoSnap.rows; ledger = undoSnap.ledger; doneLog.length = Math.min(doneLog.length, undoSnap.logLen); undoSnap = null; persist(); render(); checkRestock(true);
+    rows = undoSnap.rows; ledger = undoSnap.ledger; hold = undoSnap.hold || {}; doneLog.length = Math.min(doneLog.length, undoSnap.logLen); undoSnap = null; persist(); render(); checkRestock(true);
     toast("↩️ Selesai terakhir dibatalkan.", "good");
   };
   $("navPendingan").onclick = () => switchTab("pendingan");
@@ -9637,6 +9652,11 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       render(); checkRestock(true);
     } catch(err){ console.error(err); toast("Gagal membaca file: " + err.message, "bad"); }
   };
+  // Info + tombol reset pengurang stok (jika sudah dikoreksi manual di Data Induk)
+  const holdBox = document.createElement("span"); holdBox.id = "pdHoldInfo"; holdBox.style.cssText = "margin-left:10px; font-size:12px;";
+  $("pdInfo").insertAdjacentElement("afterend", holdBox);
+  function updHold(){ const n = Object.values(hold).reduce((a, h) => a + (h.n || 0), 0); holdBox.innerHTML = n ? `<span class="hint" title="Qty yang sudah di-Selesai-kan dan dikurangkan dari stok tampilan Pendingan">stok terpakai Selesai: <b>${n}</b> pcs</span> <button class="btn btn-ghost btn-sm" id="pdHoldReset" title="Hapus pengurang stok ini (stok kembali sesuai Data Induk)">reset</button>` : ""; const b = $("pdHoldReset"); if (b) b.onclick = () => { if (!confirm("Reset stok terpakai Selesai? Stok di Pendingan akan kembali sama dengan Data Induk.")) return; hold = {}; persist(); render(); checkRestock(true); }; }
+  const _render = render; render = async function(){ await _render.apply(this, arguments); updHold(); }; window.renderPendingan = render;
   $("pdClear").onclick = () => { if (!rows.length || !confirm("Hapus semua data pendingan?")) return; rows = []; persist(); render(); checkRestock(true); };
 
   $("pdDoneCount").textContent = doneLog.length;
