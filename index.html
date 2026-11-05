@@ -791,7 +791,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
               </select>
               <div style="display: flex; gap: 10px; margin-bottom: 10px;">
                 <select id="inWh" class="input-sm" title="Gudang tujuan barang masuk" style="margin-bottom: 0; flex: 0 0 150px;"><option value="RTS">Gudang RTS</option><option value="BESAR">Gudang Besar</option></select>
-                <input id="binInput" class="bin-input input-sm" type="text" placeholder="Lokasi Bin (Opsional)" autocomplete="off" style="margin-bottom: 0; flex: 1;">
+                <input id="binInput" class="bin-input input-sm" type="text" placeholder="Lokasi Bin (Wajib)" autocomplete="off" style="margin-bottom: 0; flex: 1;">
               </div>
               <div style="display: flex; gap: 10px; margin-bottom: 10px;">
                 <input id="docNoInput" class="input-sm" type="text" placeholder="No. Dokumen / No. Mutasi" autocomplete="off" style="margin-bottom: 0; flex: 1;">
@@ -3487,6 +3487,18 @@ async function handleScan(sku, uid){
 }
 
 async function handleScanCore(sku, uid){
+  { const b0 = (binInput.value || "").trim(); // Lokasi Bin wajib untuk semua jenis inbound
+    if(!b0 || b0 === "-"){
+      document.getElementById("scanResult").innerHTML = `<div class="result notfound">
+        <div class="sku">${escUid_(sku)}</div>
+        <div class="nama">Lokasi Bin wajib diisi sebelum scan. Barang tanpa Bin tidak dimasukkan ke staging maupun sistem.</div>
+        <div style="margin-top:4px"><span class="badge bad">⛔ LOKASI BIN KOSONG — DITOLAK</span></div>
+      </div>`;
+      toast("Isi Lokasi Bin dahulu. Scan ditolak dan tidak masuk ke sistem.", "bad");
+      binInput.focus();
+      return;
+    }
+  }
   if(inboundType.value === "REJECT"){
     if(!normRejectBin_(binInput.value)){
       document.getElementById("scanResult").innerHTML = `<div class="result notfound">
@@ -3642,6 +3654,7 @@ async function handleScanCore(sku, uid){
       const bin = typeValue === "REJECT" ? normRejectBin_(rawBin || binInput.value) : (rawBin || binInput.value).trim().toUpperCase();
       const fail = (m) => bad.push({ it, rfid: U, alasan: m });
       if(typeValue === "REJECT" && !bin){ fail("Bin / Karung Reject kosong"); continue; }
+      if(!bin || bin === "-"){ fail("Lokasi Bin kosong (wajib diisi di file atau di form)"); continue; }
       if(whValue !== WH_BESAR && isGBBin_(bin)){ fail(`Bin ${bin} berawalan GB- tapi gudang bukan Gudang Besar`); continue; }
       if(whValue === WH_BESAR && !isGBBin_(bin)){ fail(`Gudang Besar wajib Bin berawalan GB- (bin: ${bin || "kosong"})`); continue; }
       if(seen.has(U)){ fail("Duplikat (sudah di staging / dobel di file)"); continue; }
@@ -3902,7 +3915,7 @@ binInput.addEventListener("input", () => {
 function updateInboundBinHint_(){
   const wh = document.getElementById("inWh");
   binInput.placeholder = inboundType.value === "REJECT" ? "Bin / Karung Reject (Wajib, otomatis awalan RJ-)"
-    : (wh.value === WH_BESAR ? "Bin Gudang Besar (Wajib, awalan GB-)" : "Lokasi Bin (Opsional)");
+    : (wh.value === WH_BESAR ? "Bin Gudang Besar (Wajib, awalan GB-)" : "Lokasi Bin (Wajib)");
 }
 (function(){
   const el = document.getElementById("inWh");
