@@ -9629,12 +9629,11 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
         qty: parseInt(pick(o, /^jumlah|^qty/), 10) || 0, due: toMs(pick(o, /dikirim|batas/))
       })).filter(r => r.sku && r.qty > 0);
       if (!out.length){ toast("Tidak ada baris valid. Pastikan kolom: Channel - Nama Toko, SKU Master, Jumlah, Dikirim Sebelum.", "bad"); return; }
-      // pesanan yang sudah ditandai Selesai tidak dimunculkan lagi; catatan yang sudah tidak ada di file baru dibuang
-      const avail = Object.assign({}, ledger), used = {}, kept = [];
-      out.forEach(r => { const k = keyOf(r); let q = r.qty; if ((avail[k] || 0) > 0){ const t = Math.min(q, avail[k]); avail[k] -= t; used[k] = (used[k] || 0) + t; q -= t; } if (q > 0) kept.push(Object.assign({}, r, { qty: q })); });
-      const skipped = Object.values(used).reduce((a, v) => a + v, 0);
-      rows = kept; ledger = used; undoSnap = null; persist();
-      toast(`✓ ${rows.length} pesanan pendingan dimuat.` + (skipped ? ` (${skipped} pcs yang sudah Selesai tidak ditampilkan)` : "") + (rows.some(r => r.ord) ? "" : " ⚠ Kolom No Pesanan tidak ditemukan di file, jadi ditampilkan per baris."), "good");
+      // Upload baru = data lama dibersihkan total: daftar pendingan, catatan Selesai lama, dan undo dikosongkan,
+      // lalu diisi persis sesuai isi file terbaru. (Riwayat export Selesai / doneLog tetap disimpan.)
+      const oldCount = rows.length;
+      rows = out.map(r => Object.assign({}, r)); ledger = {}; undoSnap = null; chan = "all"; persist();
+      toast(`✓ Data pendingan diperbarui: ${rows.length} baris dimuat dari file baru` + (oldCount ? ` (${oldCount} baris data lama dihapus)` : "") + "." + (rows.some(r => r.ord) ? "" : " ⚠ Kolom No Pesanan tidak ditemukan di file, jadi ditampilkan per baris."), "good");
       render(); checkRestock(true);
     } catch(err){ console.error(err); toast("Gagal membaca file: " + err.message, "bad"); }
   };
