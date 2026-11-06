@@ -1530,6 +1530,8 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
             <button class="btn btn-danger btn-sm" id="pdClear" title="Hapus data pendingan">🗑️</button>
             <button class="btn btn-ghost btn-sm" id="pdUndo" title="Batalkan 'Selesai' terakhir">↩️ Undo</button>
             <div class="toolbar-spacer"></div>
+            <span class="hint" id="pdCloudStat" style="margin-right:8px;"></span>
+            <button class="btn btn-ghost btn-sm" id="pdResync" title="Kirim ulang data Pendingan di komputer ini ke cloud supaya komputer lain melihatnya">☁️ Kirim ulang</button>
             <span class="toolbar-count" id="pdInfo"></span>
             <button class="btn btn-ghost btn-sm" id="pdExportDone" title="Unduh riwayat semua pesanan yang sudah diklik Selesai (untuk dicek ulang)">📋 Export Selesai <b id="pdDoneCount">0</b></button>
             <button class="btn btn-ghost btn-sm" id="pdExport">⬇️ Export</button>
@@ -2082,7 +2084,8 @@ function saveUsers_(a){
    ============================================================ */
 const USR_PREFIX_ = "usr|";
 const PDG_PREFIX_ = "pdg|"; // data Pendingan (disinkron lewat tabel masterbin, bukan daftar Bin)
-const isSysKey_ = k => String(k).startsWith(USR_PREFIX_) || String(k).startsWith(PDG_PREFIX_);
+const POA_PREFIX_ = "poa|"; // data PO asli + penggabungan model (Rekap Inbound), disinkron lewat tabel masterbin
+const isSysKey_ = k => String(k).startsWith(USR_PREFIX_) || String(k).startsWith(PDG_PREFIX_) || String(k).startsWith(POA_PREFIX_);
 const USR_MIG_KEY_ = "wms_users_cloud_migrated_v1";
 const USR_ROLES_ = { admin:1, operator:1, outbound:1, dashboard:1, search:1 };
 function usrKey_(name){ return USR_PREFIX_ + String(name).trim().toLowerCase(); }
@@ -2508,6 +2511,18 @@ function renderConn_(){
 const SYNC_BATCH_SIZE = 400;          // maks entri antrean yang dibaca per putaran
 const SYNC_MAX_OPS_PER_REQ = 200;     // maks operasi per satu request HTTP
 const SYNC_MAX_ROWS_PER_REQ = 1500;   // maks baris/kunci per satu request HTTP
+const SYNC_MAX_BYTES_PER_REQ = 250000; // maks kira-kira byte data bertipe "part" (Pendingan / PO) per request, supaya tidak timeout
+function syncBytes_(rows){ let b = 0; for(const r of rows){ if(r && typeof r.part === "string") b += r.part.length + 200; } return b; }
+function chunkBySize_(rows, max){
+  const out = []; let cur = [], b = 0;
+  for(const r of rows){
+    const w = (r && typeof r.part === "string") ? r.part.length + 200 : 0;
+    if(cur.length && b + w > max){ out.push(cur); cur = []; b = 0; }
+    cur.push(r); b += w;
+  }
+  if(cur.length) out.push(cur);
+  return out;
+}
 function chunkArray_(arr, n){
   const out = [];
   for(let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
@@ -2517,8 +2532,8 @@ function chunkArray_(arr, n){
 // setelah request yang memuat potongan TERAKHIR entri itu sukses (urutan put/del/clear tetap terjaga).
 function buildSyncRequests_(items){
   const reqs = [];
-  let cur = { ops: [], qids: [], weight: 0 };
-  const flushCur = () => { if(cur.ops.length || cur.qids.length) reqs.push(cur); cur = { ops: [], qids: [], weight: 0 }; };
+  let cur = { ops: [], qids: [], weight: 0, bytes: 0 };
+  const flushCur = () => { if(cur.ops.length || cur.qids.length) reqs.push(cur); cur = { ops: [], qids: [], weight: 0, bytes: 0 }; };
   for(const it of items){
     let units;
     if(it.op === "clear"){
@@ -2528,13 +2543,14 @@ function buildSyncRequests_(items){
       units = chunkArray_(keys, SYNC_MAX_ROWS_PER_REQ).map(k => ({ op: "del", table: it.table, keys: k }));
     } else {
       const rows = Array.isArray(it.data) ? it.data : [it.data];
-      units = chunkArray_(rows, SYNC_MAX_ROWS_PER_REQ).map(r => ({ op: "put", table: it.table, rows: r }));
+      units = []; chunkArray_(rows, SYNC_MAX_ROWS_PER_REQ).forEach(c => chunkBySize_(c, SYNC_MAX_BYTES_PER_REQ).forEach(r => units.push({ op: "put", table: it.table, rows: r })));
     }
     if(!units.length){ cur.qids.push(it.qid); continue; }
     units.forEach((u, idx) => {
       const w = u.rows ? u.rows.length : (u.keys ? u.keys.length : 1);
-      if(cur.ops.length && (cur.weight + w > SYNC_MAX_ROWS_PER_REQ || cur.ops.length >= SYNC_MAX_OPS_PER_REQ)) flushCur();
-      cur.ops.push(u); cur.weight += w;
+      const by = u.rows ? syncBytes_(u.rows) : 0;
+      if(cur.ops.length && (cur.weight + w > SYNC_MAX_ROWS_PER_REQ || cur.ops.length >= SYNC_MAX_OPS_PER_REQ || cur.bytes + by > SYNC_MAX_BYTES_PER_REQ)) flushCur();
+      cur.ops.push(u); cur.weight += w; cur.bytes += by;
       if(idx === units.length - 1) cur.qids.push(it.qid);
     });
   }
@@ -2709,6 +2725,7 @@ async function pullAllFromCloud(showToast){
     syncState.pullErr = null; syncState.lastPull = Date.now(); pullFailCount = 0;
     if(localStorage.getItem(USR_MIG_KEY_) !== "1"){ try{ await syncUsersAfterPull_(); }catch(e){ console.warn("Migrasi akun ke cloud gagal:", e); } }
     try{ if(typeof window.pdgAfterPull_ === "function") await window.pdgAfterPull_(); }catch(e){ console.warn("Sinkron Pendingan gagal:", e); }
+    try{ if(typeof window.poAfterPull_ === "function") await window.poAfterPull_(); }catch(e){ console.warn("Sinkron PO asli gagal:", e); }
   }catch(err){
     pullFailCount++;
     console.error("Gagal menarik data cloud:", err);
@@ -7298,7 +7315,7 @@ document.getElementById("btnRefreshDashboard").onclick = () => loadDashboardRepo
 const PO_ASLI_KEY = "wms_po_asli_v1";
 let poAsli = [], poRecapCache = [];
 try{ poAsli = JSON.parse(localStorage.getItem(PO_ASLI_KEY) || "[]") || []; }catch(e){ poAsli = []; }
-function poSave_(){ try{ localStorage.setItem(PO_ASLI_KEY, JSON.stringify(poAsli)); }catch(e){ toast("Gagal menyimpan PO asli (penyimpanan browser penuh?)", "bad"); } }
+function poSave_(){ try{ localStorage.setItem(PO_ASLI_KEY, JSON.stringify(poAsli)); }catch(e){ toast("Gagal menyimpan PO asli (penyimpanan browser penuh?)", "bad"); } poPushCloud_(); }
 function poNk_(v){ return String(v == null ? "" : v).replace(/[\s\u00a0\u200b]+/g, " ").trim().toUpperCase(); }
 const PO_MODEL_STOP_ = new Set(["SET","SHIRT","GAMIS","DRESS","KIDS","DAD","MOM","GIRL","BOY","BABY","MAN","WOMAN","LADIES","PANTS","SKIRT","JACKET","VEST","TUNIK","BLOUSE","JUMPSUIT","OUTER","KEMEJA","KAOS","HIJAB","COUPLE","FAMILY","FOR"]);
 function poModelOf_(nama){
@@ -7332,7 +7349,51 @@ function poOfRemark_(remark){ const m = String(remark || "").match(/\|\s*PO\s+(.
 const PO_ALIAS_KEY = "wms_po_alias_v1";
 let poAlias = [];
 try{ poAlias = JSON.parse(localStorage.getItem(PO_ALIAS_KEY) || "[]") || []; }catch(e){ poAlias = []; }
-function poAliasSave_(){ try{ localStorage.setItem(PO_ALIAS_KEY, JSON.stringify(poAlias)); }catch(e){ toast("Gagal menyimpan penggabungan model (penyimpanan browser penuh?)", "bad"); } }
+function poAliasSave_(){ try{ localStorage.setItem(PO_ALIAS_KEY, JSON.stringify(poAlias)); }catch(e){ toast("Gagal menyimpan penggabungan model (penyimpanan browser penuh?)", "bad"); } poPushCloud_(); }
+/* ---- Sinkron cloud PO asli + penggabungan model ----
+   Sebelumnya hanya di localStorage tiap browser, sehingga Rekap Inbound kosong di komputer lain.
+   Disalin ke tabel masterbin (awalan "poa|") dengan pola yang sama seperti Pendingan:
+   potongan teks "poa|p|N" + baris "poa|meta" (stempel waktu). Versi ber-ts terbesar dipakai semua komputer. */
+const PO_TS_KEY = "wms_po_ts_v1", PO_PART_SIZE = 40000;
+let poLocalTs = Number(localStorage.getItem(PO_TS_KEY) || 0), poPushChain_ = Promise.resolve();
+function poIdbGet_(t, k){ return new Promise(res => { try{ const rq = idb.transaction(t, "readonly").objectStore(t).get(k); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null); }catch(e){ res(null); } }); }
+function poPushCloud_(){
+  poLocalTs = Date.now(); try{ localStorage.setItem(PO_TS_KEY, String(poLocalTs)); }catch(e){}
+  const snap = JSON.stringify({ asli: poAsli, alias: poAlias }), ts = poLocalTs;
+  poPushChain_ = poPushChain_.then(async () => {
+    if(!idb) return;
+    const parts = []; for(let i = 0; i === 0 || i < snap.length; i += PO_PART_SIZE) parts.push(snap.slice(i, i + PO_PART_SIZE));
+    const recs = parts.map((x, i) => ({ id: POA_PREFIX_ + "p|" + i, ts, part: x }));
+    recs.push({ id: POA_PREFIX_ + "meta", ts, n: parts.length });
+    const old = await poIdbGet_("masterbin", POA_PREFIX_ + "meta"), oldN = old ? Number(old.n) || 0 : 0;
+    const del = []; for(let i = parts.length; i < oldN; i++) del.push(POA_PREFIX_ + "p|" + i);
+    await idbRawPutMany_("masterbin", recs);
+    await idbEnqueueSync("masterbin", "put", recs.map(r => r.id), recs);
+    if(del.length){ await idbRawDeleteMany_("masterbin", del); await idbEnqueueSync("masterbin", "del", del); }
+  }).catch(e => console.error("Gagal sinkron PO asli:", e));
+  return poPushChain_;
+}
+// Dipanggil setiap selesai tarik data cloud: ambil versi cloud jika lebih baru, atau unggah data lokal yang belum ada di cloud.
+window.poAfterPull_ = async function(){
+  if(!idb) return;
+  const meta = await poIdbGet_("masterbin", POA_PREFIX_ + "meta");
+  if(!meta){
+    if(poAsli.length || poAlias.length){ if(!poLocalTs){ poLocalTs = Date.now(); try{ localStorage.setItem(PO_TS_KEY, String(poLocalTs)); }catch(e){} } poPushCloud_(); }
+    return;
+  }
+  const cts = Number(meta.ts) || 0, n = Number(meta.n) || 0;
+  if(cts <= poLocalTs || n < 1) return;
+  const ps = [];
+  for(let i = 0; i < n; i++){ const x = await poIdbGet_("masterbin", POA_PREFIX_ + "p|" + i); if(!x || Number(x.ts) !== cts || typeof x.part !== "string") return; ps.push(x.part); }
+  let st; try{ st = JSON.parse(ps.join("")); }catch(e){ return; }
+  if(!st || !Array.isArray(st.asli)) return;
+  poAsli = st.asli.filter(r => r && r.po && r.model && Number(r.qty) > 0);
+  poAlias = Array.isArray(st.alias) ? st.alias.filter(a => a && a.po && a.from && a.to) : [];
+  poLocalTs = cts;
+  try{ localStorage.setItem(PO_ASLI_KEY, JSON.stringify(poAsli)); localStorage.setItem(PO_ALIAS_KEY, JSON.stringify(poAlias)); localStorage.setItem(PO_TS_KEY, String(cts)); }catch(e){}
+  if(typeof currentActiveTab !== "undefined" && currentActiveTab === "poinbound") loadPoInbound();
+};
+
 function poLev1_(a, b){ // true jika jarak edit <= 1
   if(Math.abs(a.length - b.length) > 1) return false;
   let i = 0, j = 0, ed = 0;
@@ -9387,7 +9448,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   const KEY_HOLD = "wms_pendingan_hold_v1";
   try { hold = JSON.parse(localStorage.getItem(KEY_HOLD) || "{}") || {}; } catch(e){ hold = {}; }
   const keyOf = r => r.ord ? "O|" + String(r.channel).split(" - ")[0].trim().toLowerCase() + "|" + r.ord + "|" + r.sku.toUpperCase() : r.sku.toUpperCase() + "|" + r.channel.toLowerCase() + "|" + r.due;
-  const TS_KEY = "wms_pendingan_ts_v1", PART_SIZE = 150000;
+  const TS_KEY = "wms_pendingan_ts_v1", PART_SIZE = 40000;
   let localTs = Number(localStorage.getItem(TS_KEY) || 0), pushChain = Promise.resolve();
   const persist = () => { localTs = Date.now(); try { localStorage.setItem(KEY, JSON.stringify(rows)); localStorage.setItem(KEY_DONE, JSON.stringify(ledger)); localStorage.setItem(KEY_HOLD, JSON.stringify(hold)); localStorage.setItem(KEY_LOG, JSON.stringify(doneLog)); localStorage.setItem(TS_KEY, String(localTs)); } catch(e){} const c = document.getElementById("pdDoneCount"); if (c) c.textContent = doneLog.length; pushCloud(); };
 
@@ -9395,8 +9456,24 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
      (awalan "pdg|") seperti akun, jadi tidak perlu mengubah server. Data dipecah jadi potongan teks "pdg|p|N"
      + satu baris "pdg|meta" berisi stempel waktu; versi dengan ts terbesar yang dipakai semua komputer. ---- */
   const idbGet_ = (t, k) => new Promise(res => { try { const rq = idb.transaction(t, "readonly").objectStore(t).get(k); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null); } catch(e){ res(null); } });
+  const setStat_ = t => { const el = document.getElementById("pdCloudStat"); if (el) el.textContent = t; };
+  let watchTimer_ = null;
+  function watchPush_(){
+    if (watchTimer_) clearInterval(watchTimer_);
+    let tries = 0; setStat_("☁️ Mengirim ke cloud...");
+    watchTimer_ = setInterval(async () => {
+      tries++;
+      try {
+        const n = await idbCountSyncQueue();
+        if (n === 0 && !syncState.pushErr){ clearInterval(watchTimer_); watchTimer_ = null; setStat_("☁️ Tersimpan di cloud " + fmtClock_(Date.now()) + " — komputer lain akan melihatnya setelah sinkron"); }
+        else if (syncState.pushErr){ setStat_("⚠ Gagal kirim ke cloud: " + (syncState.pushErr.msg || "") + " (mencoba lagi otomatis)"); }
+        else if (tries > 90){ clearInterval(watchTimer_); watchTimer_ = null; setStat_("⚠ Pengiriman ke cloud belum selesai (" + n + " menunggu). Cek koneksi."); }
+        else setStat_("☁️ Mengirim ke cloud... (" + n + " menunggu)");
+      } catch(e){}
+    }, 2000);
+  }
   function pushCloud(){
-    const snap = JSON.stringify({ rows, ledger, log: doneLog, hold }), ts = localTs;
+    const snap = JSON.stringify({ r2: rows.map(r => [r.channel, r.sku, r.ord || "", r.qty, r.due == null ? null : r.due]), ledger, log: doneLog, hold }), ts = localTs;
     pushChain = pushChain.then(async () => {
       if (!idb) return;
       const parts = []; for (let i = 0; i === 0 || i < snap.length; i += PART_SIZE) parts.push(snap.slice(i, i + PART_SIZE));
@@ -9407,7 +9484,8 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       await idbRawPutMany_("masterbin", recs);
       await idbEnqueueSync("masterbin", "put", recs.map(r => r.id), recs);
       if (del.length){ await idbRawDeleteMany_("masterbin", del); await idbEnqueueSync("masterbin", "del", del); }
-    }).catch(e => console.error("Gagal sinkron Pendingan:", e));
+      watchPush_();
+    }).catch(e => { console.error("Gagal sinkron Pendingan:", e); setStat_("⚠ Gagal menyiapkan kirim ke cloud: " + ((e && e.message) || e)); });
     return pushChain;
   }
   // Dipanggil setiap selesai tarik data cloud: ambil versi cloud jika lebih baru, atau unggah data lokal yang belum ada di cloud.
@@ -9416,14 +9494,17 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     const meta = await idbGet_("masterbin", PDG_PREFIX_ + "meta");
     if (!meta){
       if (rows.length || Object.keys(ledger).length || doneLog.length){ if (!localTs){ localTs = Date.now(); try{ localStorage.setItem(TS_KEY, String(localTs)); }catch(e){} } pushCloud(); }
+      else setStat_("☁️ Cloud belum berisi data Pendingan. Upload dulu di komputer yang punya filenya.");
       return;
     }
     const cts = Number(meta.ts) || 0, n = Number(meta.n) || 0;
-    if (cts <= localTs || n < 1) return;
+    if (cts <= localTs || n < 1){ if (!watchTimer_) setStat_("☁️ Sinkron cloud OK " + fmtClock_(Date.now())); return; }
     const ps = [];
-    for (let i = 0; i < n; i++){ const p = await idbGet_("masterbin", PDG_PREFIX_ + "p|" + i); if (!p || Number(p.ts) !== cts || typeof p.part !== "string") return; ps.push(p.part); } // belum lengkap: tunggu tarikan berikutnya
-    let st; try { st = JSON.parse(ps.join("")); } catch(e){ return; }
+    for (let i = 0; i < n; i++){ const p = await idbGet_("masterbin", PDG_PREFIX_ + "p|" + i); if (!p || Number(p.ts) !== cts || typeof p.part !== "string"){ setStat_("⏳ Data Pendingan dari cloud belum lengkap (bagian " + (i + 1) + "/" + n + "), menunggu sinkron berikutnya..."); return; } ps.push(p.part); } // belum lengkap: tunggu tarikan berikutnya
+    let st; try { st = JSON.parse(ps.join("")); } catch(e){ setStat_("⚠ Data Pendingan di cloud rusak. Klik ☁️ Kirim ulang di komputer yang punya data."); return; }
+    if (st && Array.isArray(st.r2)) st.rows = st.r2.map(a => ({ channel: String(a[0]), sku: String(a[1]), ord: String(a[2] || ""), qty: Number(a[3]) || 0, due: a[4] }));
     if (!st || !Array.isArray(st.rows)) return;
+    setStat_("☁️ Data Pendingan diambil dari cloud " + fmtClock_(Date.now()));
     rows = st.rows.filter(r => r && typeof r.sku === "string" && typeof r.channel === "string" && r.qty > 0);
     ledger = (st.ledger && typeof st.ledger === "object" && !Array.isArray(st.ledger)) ? st.ledger : {};
     if (Array.isArray(st.log)) doneLog = st.log;
@@ -9644,6 +9725,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   };
   $("navPendingan").onclick = () => switchTab("pendingan");
   $("pdUpload").onclick = () => $("pdFile").click();
+  $("pdResync").onclick = () => { if (!rows.length && !doneLog.length && !confirm("Data Pendingan di komputer ini kosong. Mengirim ulang akan MENGOSONGKAN data di cloud juga. Lanjutkan?")) return; persist(); toast("Mengirim data Pendingan ke cloud...", "good"); };
 
   $("pdFile").onchange = async e => {
     const f = e.target.files[0]; e.target.value = ""; if (!f) return;
