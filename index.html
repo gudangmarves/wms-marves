@@ -9551,6 +9551,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
         const k = String(r.sku || "").toUpperCase();
         (m[k] = m[k] || { qty: 0, nama: "" }).qty++;
         if (!m[k].nama && r.nama) m[k].nama = r.nama;
+        const bn = String(r.bin || "-").toUpperCase(); (m[k].bins = m[k].bins || {})[bn] = (m[k].bins[bn] || 0) + 1;
       });
       // Kurangi stok dengan qty yang sudah di-Selesai-kan. Jika kemudian stok fisik turun karena Outbound sungguhan,
       // pengurang ikut berkurang sebesar penurunan itu supaya barang yang sama tidak terpotong dua kali.
@@ -9567,6 +9568,24 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     return m;
   }
 
+  // Alokasi lokasi: tiap SKU diambil dari bin yang stoknya paling banyak dulu (lebih sedikit titik ambil).
+  // Jumlah total dibatasi sama dengan stok yang dianggap tersedia (sudah dikurangi pesanan "Selesai").
+  function mkBinPicker(stock){
+    const pool = {};
+    const fn = (k, t) => {
+      fn.arr = [];
+      if (t <= 0) return "";
+      if (!pool[k]){
+        const s = stock[k]; let tot = s ? s.qty : 0;
+        pool[k] = Object.entries((s && s.bins) || {}).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([b, q]) => { const u = Math.min(q, Math.max(0, tot)); tot -= u; return [b, u]; }).filter(x => x[1] > 0);
+      }
+      const out = []; let need = t;
+      for (const e of pool[k]){ if (need <= 0) break; const u = Math.min(e[1], need); if (u > 0){ out.push(e[0] + " ×" + u); fn.arr.push([e[0], u]); e[1] -= u; need -= u; } }
+      return out.join(", ");
+    };
+    fn.arr = [];
+    return fn;
+  }
   function filtered(){
     const q = ($("pdSearch").value || "").toLowerCase().trim();
     return rows.filter(r => (chan === "all" || platOf(r.channel) === chan) &&
@@ -9584,7 +9603,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     const hasOrd = rows.some(r => r.ord);
     if (view === "row"){
       // Per PESANAN: satu baris = satu nomor pesanan (isi SKU-nya digabung). Stok dibagi mulai dari batas kirim paling dekat.
-      const q = ($("pdSearch").value || "").toLowerCase().trim(), og = {}, alok = new Map(), left = {};
+      const q = ($("pdSearch").value || "").toLowerCase().trim(), og = {}, alok = new Map(), left = {}, loc = new Map(), pick = mkBinPicker(stock);
       rows.forEach((r, i) => {
         const k = r.ord ? platOf(r.channel) + "||" + r.ord : "#" + i, d = deadline(r);
         const o = og[k] = og[k] || { key: k, ord: r.ord, ch: r.channel, lines: [], due: null, first: i };
@@ -9593,7 +9612,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       const all = Object.values(og).sort((a, b) => (a.due ?? 9e15) - (b.due ?? 9e15));
       all.forEach(o => {
         let al = 0; o.qty = 0;
-        o.lines.forEach(r => { const k = r.sku.toUpperCase(); if (!(k in left)) left[k] = stock[k] ? stock[k].qty : 0; const t = Math.min(left[k], r.qty); left[k] -= t; alok.set(r, t); al += t; o.qty += r.qty; });
+        o.lines.forEach(r => { const k = r.sku.toUpperCase(); if (!(k in left)) left[k] = stock[k] ? stock[k].qty : 0; const t = Math.min(left[k], r.qty); left[k] -= t; alok.set(r, t); loc.set(r, pick(k, t)); al += t; o.qty += r.qty; });
         o.kurang = o.qty - al;
       });
       const show = all.filter(o => (chan === "all" || platOf(o.ch) === chan) && (!q || (o.ord || "").toLowerCase().includes(q) || o.ch.toLowerCase().includes(q) || o.lines.some(r => r.sku.toLowerCase().includes(q))));
@@ -9602,7 +9621,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       head.innerHTML = `<tr><th>No Pesanan</th><th>Channel</th><th>Batas Kirim</th><th>Isi Pesanan</th><th style="text-align:center;">Qty</th><th style="text-align:center;">Status Stok</th><th style="text-align:center;">Aksi</th></tr>`;
       body.innerHTML = show.map(o => {
         const l0 = o.lines[0], orig = isTiktok(l0) && l0.due != null ? `<div class="hint" style="font-size:10px;">asli ${fmt(Math.min(...o.lines.map(r => r.due ?? 9e15)))} (−${TIKTOK_MINUS_DAYS} hari)</div>` : "";
-        const items = o.lines.map(r => { const s = stock[r.sku.toUpperCase()], k = r.qty - alok.get(r); return `<div><b style="font-family:var(--font-mono);">${escUid_(r.sku)}</b> ${escUid_(s ? s.nama : "")} <b>×${r.qty}</b> ${k > 0 ? `<span style="color:var(--danger); font-weight:700;">(kurang ${k})</span>` : "✅"}</div>`; }).join("");
+        const items = o.lines.map(r => { const s = stock[r.sku.toUpperCase()], k = r.qty - alok.get(r); return `<div><b style="font-family:var(--font-mono);">${escUid_(r.sku)}</b> ${escUid_(s ? s.nama : "")} <b>×${r.qty}</b> ${k > 0 ? `<span style="color:var(--danger); font-weight:700;">(kurang ${k})</span>` : "✅"}${loc.get(r) ? `<div style="font-size:11px; font-family:var(--font-mono); color:var(--accent); font-weight:700;">📍 ${escUid_(loc.get(r))}</div>` : ""}</div>`; }).join("");
         const stat = o.kurang === 0 ? `<span class="badge success">✅ Siap</span>` : o.kurang === o.qty ? `<span style="color:var(--danger); font-weight:800;">Kurang -${o.kurang}</span>` : `<span style="color:var(--warning); font-weight:800;">Sebagian -${o.kurang}</span>`;
         const act = o.ord ? `data-done-ord="${escUid_(o.key)}"` : `data-done-row="${rows.indexOf(l0)}"`;
         return `<tr${o.kurang === 0 ? ' style="background:rgba(46,160,67,.12);"' : ""}><td style="font-family:var(--font-mono); font-weight:700;">${escUid_(o.ord || "-")}</td><td>${escUid_(o.ch)}</td><td>${dueBadge(o.due)}${orig}</td><td>${items}</td><td style="text-align:center; font-weight:700;">${o.qty}</td><td style="text-align:center;">${stat}</td><td style="text-align:center;"><button class="btn btn-accent btn-sm" ${act} title="Tandai sudah di-outbound & hapus dari pendingan">✔ Selesai</button></td></tr>`;
@@ -9619,13 +9638,14 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       });
       const all = Object.values(g).sort((a, b) => (a.due ?? 9e15) - (b.due ?? 9e15) || a.sku.localeCompare(b.sku) || a.ch.localeCompare(b.ch));
       const left = {};
-      all.forEach(o => { const k = o.sku.toUpperCase(); if (!(k in left)) left[k] = stock[k] ? stock[k].qty : 0; o.alok = Math.min(left[k], o.qty); left[k] -= o.alok; o.kurang = o.qty - o.alok; });
+      const pick2 = mkBinPicker(stock);
+      all.forEach(o => { const k = o.sku.toUpperCase(); if (!(k in left)) left[k] = stock[k] ? stock[k].qty : 0; o.alok = Math.min(left[k], o.qty); left[k] -= o.alok; o.kurang = o.qty - o.alok; o.loc = pick2(k, o.alok); });
       const show = all.filter(o => (chan === "all" || platOf(o.ch) === chan) && (!q || o.sku.toLowerCase().includes(q) || o.ch.toLowerCase().includes(q)));
       $("pdInfo").innerHTML = `<b>${show.length}</b> baris · <b>${show.reduce((a, o) => a + o.qty, 0)}</b> pcs`;
-      head.innerHTML = `<tr><th>SKU</th><th>Nama Barang</th><th>Channel</th><th>Batas Kirim</th><th style="text-align:center;">Pesanan</th><th style="text-align:center;">Qty Pending</th><th style="text-align:center;">Stok Gudang</th><th style="text-align:center;">Tertutup Stok</th><th style="text-align:center;">Kurang</th>${hasOrd ? "" : `<th style="text-align:center;">Aksi</th>`}</tr>`;
+      head.innerHTML = `<tr><th>SKU</th><th>Nama Barang</th><th>Channel</th><th>Batas Kirim</th><th style="text-align:center;">Pesanan</th><th style="text-align:center;">Qty Pending</th><th style="text-align:center;">Stok Gudang</th><th style="text-align:center;">Tertutup Stok</th><th style="text-align:center;">Kurang</th><th>Lokasi Bin</th>${hasOrd ? "" : `<th style="text-align:center;">Aksi</th>`}</tr>`;
       body.innerHTML = show.map(o => {
         const s = stock[o.sku.toUpperCase()], st = s ? s.qty : 0;
-        return `<tr${o.alok > 0 ? ' style="background:rgba(46,160,67,.12);"' : ""}><td style="font-family:var(--font-mono); font-weight:700;">${escUid_(o.sku)}</td><td>${escUid_(s ? s.nama : "-")}</td><td>${escUid_(o.ch)}</td><td>${dueBadge(o.due)}</td><td style="text-align:center;">${o.n}</td><td style="text-align:center; font-weight:700;">${o.qty}</td><td style="text-align:center;">${stokCell(st)}</td><td style="text-align:center; font-weight:700; color:var(--success);">${o.alok}</td><td style="text-align:center; font-weight:800; color:${o.kurang > 0 ? "var(--danger)" : "var(--success)"};">${o.kurang > 0 ? "-" + o.kurang : "✓"}</td>${hasOrd ? "" : `<td style="text-align:center;"><button class="btn btn-accent btn-sm" data-done-g="1" data-sku="${escUid_(o.sku)}" data-ch="${escUid_(o.ch)}" data-day="${o.day}" data-qty="${o.qty}" title="Tandai sudah di-outbound & hapus dari pendingan">✔ Selesai</button></td>`}</tr>`;
+        return `<tr${o.alok > 0 ? ' style="background:rgba(46,160,67,.12);"' : ""}><td style="font-family:var(--font-mono); font-weight:700;">${escUid_(o.sku)}</td><td>${escUid_(s ? s.nama : "-")}</td><td>${escUid_(o.ch)}</td><td>${dueBadge(o.due)}</td><td style="text-align:center;">${o.n}</td><td style="text-align:center; font-weight:700;">${o.qty}</td><td style="text-align:center;">${stokCell(st)}</td><td style="text-align:center; font-weight:700; color:var(--success);">${o.alok}</td><td style="text-align:center; font-weight:800; color:${o.kurang > 0 ? "var(--danger)" : "var(--success)"};">${o.kurang > 0 ? "-" + o.kurang : "✓"}</td><td style="font-family:var(--font-mono); font-size:11px; font-weight:700; color:var(--accent);">${escUid_(o.loc || "-")}</td>${hasOrd ? "" : `<td style="text-align:center;"><button class="btn btn-accent btn-sm" data-done-g="1" data-sku="${escUid_(o.sku)}" data-ch="${escUid_(o.ch)}" data-day="${o.day}" data-qty="${o.qty}" title="Tandai sudah di-outbound & hapus dari pendingan">✔ Selesai</button></td>`}</tr>`;
       }).join("");
     }
   }
@@ -9733,7 +9753,10 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       const wb = XLSX.read(await f.arrayBuffer(), { type: "array", cellDates: true });
       const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
       const pick = (o, re) => { const k = Object.keys(o).find(k => re.test(k.trim().toLowerCase())); return k ? o[k] : ""; };
-      const out = data.map(o => ({
+      // Barang gratis (hadiah/free gift) tidak perlu dicari stok & lokasinya: di file Desty harganya 0 (Subtotal Produk = 0).
+      const isGift = o => { const v = pick(o, /^subtotal\s*produk/); return v !== "" && v != null && Number(String(v).replace(/[^0-9.\-]/g, "")) === 0; };
+      const giftN = data.filter(isGift).length;
+      const out = data.filter(o => !isGift(o)).map(o => ({
         channel: String(pick(o, /^channel/)).trim(), sku: String(pick(o, /^sku/)).trim(),
         ord: String(pick(o, /(no\.?|nomor|id|kode)\s*(pesanan|order|invoice)|order\s*(id|no|number|sn)|^(pesanan|order|invoice)$|invoice/)).trim(),
         qty: parseInt(pick(o, /^jumlah|^qty/), 10) || 0, due: toMs(pick(o, /dikirim|batas/))
@@ -9743,7 +9766,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       // lalu diisi persis sesuai isi file terbaru. (Riwayat export Selesai / doneLog tetap disimpan.)
       const oldCount = rows.length;
       rows = out.map(r => Object.assign({}, r)); ledger = {}; undoSnap = null; chan = "all"; persist();
-      toast(`✓ Data pendingan diperbarui: ${rows.length} baris dimuat dari file baru` + (oldCount ? ` (${oldCount} baris data lama dihapus)` : "") + "." + (rows.some(r => r.ord) ? "" : " ⚠ Kolom No Pesanan tidak ditemukan di file, jadi ditampilkan per baris."), "good");
+      toast(`✓ Data pendingan diperbarui: ${rows.length} baris dimuat dari file baru` + (oldCount ? ` (${oldCount} baris data lama dihapus)` : "") + (giftN ? ` ${giftN} baris barang gratis dilewati.` : "") + "." + (rows.some(r => r.ord) ? "" : " ⚠ Kolom No Pesanan tidak ditemukan di file, jadi ditampilkan per baris."), "good");
       render(); checkRestock(true);
     } catch(err){ console.error(err); toast("Gagal membaca file: " + err.message, "bad"); }
   };
@@ -9773,9 +9796,44 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   $("pdExport").onclick = async () => {
     const list = filtered(), stock = await stockMap();
     if (!list.length){ toast("Tidak ada data untuk diexport.", "bad"); return; }
-    const aoa = [["No Pesanan","Channel - Nama Toko","SKU","Nama Barang","Qty","Stok","Batas Kirim Asli","Batas Kirim (TikTok -2 hari)"]]
-      .concat(list.map(r => { const s = stock[r.sku.toUpperCase()]; return [r.ord || "", r.channel, r.sku, s ? s.nama : "", r.qty, s ? s.qty : 0, r.due != null ? fmt(r.due) : "", deadline(r) != null ? fmt(deadline(r)) : ""]; }));
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Pendingan");
+    // Alokasi stok & bin dihitung atas SEMUA pesanan (urut batas kirim terdekat), sama seperti tampilan layar;
+    // lalu yang diexport hanya baris sesuai filter channel/pencarian.
+    const og = {}, info = new Map(), left = {}, pick = mkBinPicker(stock);
+    rows.forEach((r, i) => {
+      const k = r.ord ? platOf(r.channel) + "||" + r.ord : "#" + i, d = deadline(r);
+      const o = og[k] = og[k] || { lines: [], due: null };
+      o.lines.push(r); if (d != null && (o.due == null || d < o.due)) o.due = d;
+    });
+    Object.values(og).sort((a, b) => (a.due ?? 9e15) - (b.due ?? 9e15)).forEach(o => o.lines.forEach(r => {
+      const k = r.sku.toUpperCase(); if (!(k in left)) left[k] = stock[k] ? stock[k].qty : 0;
+      const t = Math.min(left[k], r.qty); left[k] -= t;
+      const txt = pick(k, t); info.set(r, { t, txt, arr: pick.arr.slice() });
+    }));
+    const stat = (r, t) => t >= r.qty ? "SIAP" : t > 0 ? "SEBAGIAN" : "KURANG";
+    const aoa = [["No Pesanan","Channel - Nama Toko","SKU","Nama Barang","Qty Pesan","Qty Siap Ambil","Kurang","Status","Lokasi Bin (ambil dari)","Batas Kirim Asli","Batas Kirim (TikTok -2 hari)"]]
+      .concat(list.map(r => { const s = stock[r.sku.toUpperCase()], f = info.get(r) || { t: 0, txt: "" };
+        return [r.ord || "", r.channel, r.sku, s ? s.nama : "", r.qty, f.t, r.qty - f.t, stat(r, f.t), f.txt, r.due != null ? fmt(r.due) : "", deadline(r) != null ? fmt(deadline(r)) : ""]; }));
+    // Daftar ambil per bin: diurutkan menurut bin (alur jalan picker), digabung per bin + SKU.
+    const pk = {};
+    list.forEach(r => { const f = info.get(r); if (!f) return; f.arr.forEach(([bin, u]) => {
+      const k = bin + "||" + r.sku.toUpperCase(); const o = pk[k] = pk[k] || { bin, sku: r.sku, nama: (stock[r.sku.toUpperCase()] || {}).nama || "", qty: 0, ords: new Set() };
+      o.qty += u; o.ords.add(r.ord || "(tanpa no)"); }); });
+    const nat = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+    const pickList = Object.values(pk).sort((a, b) => nat(a.bin, b.bin) || nat(a.sku, b.sku));
+    const aoa2 = [["Bin","SKU","Nama Barang","Qty Ambil","Jumlah Pesanan","No Pesanan","Cek (✓)"]]
+      .concat(pickList.map(o => [o.bin, o.sku, o.nama, o.qty, o.ords.size, [...o.ords].join(", "), ""]));
+    aoa2.push(["TOTAL","","", pickList.reduce((a, o) => a + o.qty, 0), "", "", ""]);
+    const kur = {};
+    list.forEach(r => { const f = info.get(r) || { t: 0 }, k = r.qty - f.t; if (k > 0){ const o = kur[r.sku.toUpperCase()] = kur[r.sku.toUpperCase()] || { sku: r.sku, nama: (stock[r.sku.toUpperCase()] || {}).nama || "", qty: 0 }; o.qty += k; } });
+    const aoa3 = [["SKU","Nama Barang","Qty Kurang (belum ada stok)"]].concat(Object.values(kur).sort((a, b) => nat(a.sku, b.sku)).map(o => [o.sku, o.nama, o.qty]));
+    const wb = XLSX.utils.book_new();
+    const w1 = XLSX.utils.aoa_to_sheet(aoa), w2 = XLSX.utils.aoa_to_sheet(aoa2), w3 = XLSX.utils.aoa_to_sheet(aoa3);
+    w1["!cols"] = [{wch:24},{wch:28},{wch:14},{wch:36},{wch:9},{wch:13},{wch:8},{wch:10},{wch:34},{wch:17},{wch:22}];
+    w2["!cols"] = [{wch:14},{wch:14},{wch:40},{wch:10},{wch:14},{wch:60},{wch:9}];
+    w3["!cols"] = [{wch:14},{wch:40},{wch:26}];
+    XLSX.utils.book_append_sheet(wb, w2, "Daftar Ambil per Bin");
+    XLSX.utils.book_append_sheet(wb, w1, "Pendingan");
+    if (aoa3.length > 1) XLSX.utils.book_append_sheet(wb, w3, "Belum Ada Stok");
     XLSX.writeFile(wb, `Pendingan_${chan}_${new Date().toISOString().slice(0,10)}.xlsx`);
   };
 })();
