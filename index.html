@@ -923,6 +923,16 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
             </div>
           </div>
         </div>
+        <div class="card" id="outPickCard" style="grid-column: 1 / -1; margin: 0;">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+            <h3 class="card-header" style="margin:0;">📍 Daftar Ambil per Lokasi (dari Pendingan)</h3>
+            <select id="outPickChan" class="bin-input input-sm" style="width:auto; margin:0;"></select>
+            <button class="btn btn-ghost btn-sm" id="outPickReload">🔄 Muat ulang</button>
+            <span class="hint" id="outPickSum"></span>
+          </div>
+          <div class="hint" style="margin-bottom:8px;">Urut berdasarkan bin. Klik baris untuk mengisi Target Bin di atas. Setelah barang di-scan Outbound, klik ✓ Selesai di menu Pendingan agar tidak muncul lagi.</div>
+          <div class="scroll-table" style="max-height:420px; overflow:auto;" id="outPickBody"></div>
+        </div>
         </div>
       </section>
 
@@ -4130,6 +4140,7 @@ async function executeDeductionCore(sku, bin, typeStr, remark, isSession = false
 }
 
 function renderOutboundLog() {
+  try{ if(window.outPickRefresh_) window.outPickRefresh_(); }catch(e){}
     const tbody = document.getElementById("outboundLogBody");
     if(!tbody) return;
     tbody.innerHTML = "";
@@ -9551,7 +9562,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
         const k = String(r.sku || "").toUpperCase();
         (m[k] = m[k] || { qty: 0, nama: "" }).qty++;
         if (!m[k].nama && r.nama) m[k].nama = r.nama;
-        const bn = String(r.bin || "-").toUpperCase(); (m[k].bins = m[k].bins || {})[bn] = (m[k].bins[bn] || 0) + 1;
+        const bn = String(r.bin || "-").toUpperCase(); (m[k].bins = m[k].bins || {})[bn] = (m[k].bins[bn] || 0) + 1; if (isBesar_(r) || isGBBin_(bn)) (m[k].besar = m[k].besar || {})[bn] = 1;
       });
       // Kurangi stok dengan qty yang sudah di-Selesai-kan. Jika kemudian stok fisik turun karena Outbound sungguhan,
       // pengurang ikut berkurang sebesar penurunan itu supaya barang yang sama tidak terpotong dua kali.
@@ -9577,15 +9588,75 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       if (t <= 0) return "";
       if (!pool[k]){
         const s = stock[k]; let tot = s ? s.qty : 0;
-        pool[k] = Object.entries((s && s.bins) || {}).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([b, q]) => { const u = Math.min(q, Math.max(0, tot)); tot -= u; return [b, u]; }).filter(x => x[1] > 0);
+        const bs = (s && s.besar) || {}; pool[k] = Object.entries((s && s.bins) || {}).sort((a, b) => (bs[a[0]] ? 1 : 0) - (bs[b[0]] ? 1 : 0) || b[1] - a[1] || a[0].localeCompare(b[0])).map(([b, q]) => { const u = Math.min(q, Math.max(0, tot)); tot -= u; return [b, u, !!bs[b]]; }).filter(x => x[1] > 0);
       }
       const out = []; let need = t;
-      for (const e of pool[k]){ if (need <= 0) break; const u = Math.min(e[1], need); if (u > 0){ out.push(e[0] + " ×" + u); fn.arr.push([e[0], u]); e[1] -= u; need -= u; } }
+      for (const e of pool[k]){ if (need <= 0) break; const u = Math.min(e[1], need); if (u > 0){ out.push(e[0] + (e[2] ? " ⚠Besar" : "") + " ×" + u); fn.arr.push([e[0], u, e[2]]); e[1] -= u; need -= u; } }
       return out.join(", ");
     };
     fn.arr = [];
     return fn;
   }
+  // Alokasi stok ke semua baris pesanan (batas kirim terdekat dulu) -> Map(baris -> {t, txt, arr}).
+  function computeAlloc(stock){
+    const og = {}, info = new Map(), left = {}, pick = mkBinPicker(stock);
+    rows.forEach((r, i) => {
+      const k = r.ord ? platOf(r.channel) + "||" + r.ord : "#" + i, d = deadline(r);
+      const o = og[k] = og[k] || { lines: [], due: null };
+      o.lines.push(r); if (d != null && (o.due == null || d < o.due)) o.due = d;
+    });
+    Object.values(og).sort((a, b) => (a.due ?? 9e15) - (b.due ?? 9e15)).forEach(o => o.lines.forEach(r => {
+      const k = r.sku.toUpperCase(); if (!(k in left)) left[k] = stock[k] ? stock[k].qty : 0;
+      const t = Math.min(left[k], r.qty); left[k] -= t;
+      const txt = pick(k, t); info.set(r, { t, txt, arr: pick.arr.slice() });
+    }));
+    return info;
+  }
+  // Daftar ambil per bin (urut bin) dari baris `list`, digabung per bin + SKU.
+  function buildPickList(list, info, stock){
+    const pk = {};
+    list.forEach(r => { const f = info.get(r); if (!f) return; f.arr.forEach(([bin, u, bsr]) => {
+      const k = bin + "||" + r.sku.toUpperCase(); const o = pk[k] = pk[k] || { bin, sku: r.sku, nama: (stock[r.sku.toUpperCase()] || {}).nama || "", qty: 0, ords: new Set(), besar: !!bsr };
+      o.qty += u; o.ords.add(r.ord || "(tanpa no)"); }); });
+    const nat = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+    return Object.values(pk).sort((a, b) => (a.besar ? 1 : 0) - (b.besar ? 1 : 0) || nat(a.bin, b.bin) || nat(a.sku, b.sku));
+  }
+
+  /* ---- Kartu "Daftar Ambil per Lokasi" di menu Outbound ---- */
+  let opChan = "all", opTimer = null;
+  async function renderOutPick(){
+    const box = document.getElementById("outPickBody"); if (!box) return;
+    const sel = document.getElementById("outPickChan");
+    if (sel){
+      const chans = ["all"].concat([...new Set(rows.map(r => platOf(r.channel)))].sort());
+      if (sel.dataset.sig !== chans.join("|")){ sel.innerHTML = chans.map(c => `<option value="${escUid_(c)}">${c === "all" ? "Semua channel" : escUid_(c)}</option>`).join(""); sel.dataset.sig = chans.join("|"); }
+      sel.value = chans.includes(opChan) ? opChan : "all"; opChan = sel.value;
+    }
+    if (!rows.length){ box.innerHTML = `<div class="hint" style="padding:14px; text-align:center;">Belum ada data Pendingan. Upload pesanan dulu di menu Pendingan.</div>`; return; }
+    const stock = await stockMap(), info = computeAlloc(stock);
+    const list = rows.filter(r => opChan === "all" || platOf(r.channel) === opChan);
+    const pl = buildPickList(list, info, stock);
+    const totQty = pl.reduce((a, o) => a + o.qty, 0), nOrd = new Set(list.filter(r => (info.get(r) || {}).t > 0).map(r => r.ord || r.sku)).size;
+    let kurang = 0; list.forEach(r => { kurang += r.qty - ((info.get(r) || {}).t || 0); });
+    const sm = document.getElementById("outPickSum"); if (sm) sm.innerHTML = `<b>${pl.length}</b> titik ambil · <b>${totQty}</b> pcs · <b>${nOrd}</b> pesanan` + (kurang ? ` · <span style="color:var(--danger); font-weight:700;">${kurang} pcs belum ada stok</span>` : "");
+    if (!pl.length){ box.innerHTML = `<div class="hint" style="padding:14px; text-align:center;">Tidak ada barang yang siap diambil.</div>`; return; }
+    box.innerHTML = `<table><thead><tr><th>Bin</th><th>SKU</th><th>Nama Barang</th><th style="text-align:center;">Qty</th><th style="text-align:center;">Pesanan</th></tr></thead><tbody>` +
+      pl.map(o => `<tr class="outpick-row" data-bin="${escUid_(o.bin)}" style="cursor:pointer;" title="Klik untuk mengisi Target Bin">
+        <td style="font-family:var(--font-mono); font-size:17px; font-weight:800; color:${o.besar ? "var(--warning, #d29922)" : "var(--accent)"}; white-space:nowrap;">${escUid_(o.bin)}${o.besar ? `<div style="font-size:10px; font-weight:700;">⚠ Gudang Besar: transfer dulu</div>` : ""}</td>
+        <td style="font-family:var(--font-mono); font-weight:700;">${escUid_(o.sku)}</td>
+        <td style="font-size:12px;">${escUid_(o.nama || "")}</td>
+        <td style="text-align:center; font-size:17px; font-weight:800;">${o.qty}</td>
+        <td style="text-align:center;" title="${escUid_([...o.ords].join(", "))}">${o.ords.size}</td></tr>`).join("") + `</tbody></table>`;
+    box.querySelectorAll(".outpick-row").forEach(tr => tr.onclick = () => { const bi = document.getElementById("outBinInput"); if (bi){ bi.value = tr.dataset.bin; } const sc = document.getElementById("outScanInput"); if (sc) sc.focus(); });
+  }
+  window.outPickRefresh_ = () => { clearTimeout(opTimer); opTimer = setTimeout(renderOutPick, 500); };
+  (function initOutPick(){
+    const sel = document.getElementById("outPickChan"), btn = document.getElementById("outPickReload"), nav = document.getElementById("navOutbound");
+    if (sel) sel.onchange = () => { opChan = sel.value; renderOutPick(); };
+    if (btn) btn.onclick = () => renderOutPick();
+    if (nav) nav.addEventListener("click", () => setTimeout(renderOutPick, 80));
+  })();
+
   function filtered(){
     const q = ($("pdSearch").value || "").toLowerCase().trim();
     return rows.filter(r => (chan === "all" || platOf(r.channel) === chan) &&
@@ -9798,38 +9869,24 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     if (!list.length){ toast("Tidak ada data untuk diexport.", "bad"); return; }
     // Alokasi stok & bin dihitung atas SEMUA pesanan (urut batas kirim terdekat), sama seperti tampilan layar;
     // lalu yang diexport hanya baris sesuai filter channel/pencarian.
-    const og = {}, info = new Map(), left = {}, pick = mkBinPicker(stock);
-    rows.forEach((r, i) => {
-      const k = r.ord ? platOf(r.channel) + "||" + r.ord : "#" + i, d = deadline(r);
-      const o = og[k] = og[k] || { lines: [], due: null };
-      o.lines.push(r); if (d != null && (o.due == null || d < o.due)) o.due = d;
-    });
-    Object.values(og).sort((a, b) => (a.due ?? 9e15) - (b.due ?? 9e15)).forEach(o => o.lines.forEach(r => {
-      const k = r.sku.toUpperCase(); if (!(k in left)) left[k] = stock[k] ? stock[k].qty : 0;
-      const t = Math.min(left[k], r.qty); left[k] -= t;
-      const txt = pick(k, t); info.set(r, { t, txt, arr: pick.arr.slice() });
-    }));
+    const info = computeAlloc(stock);
     const stat = (r, t) => t >= r.qty ? "SIAP" : t > 0 ? "SEBAGIAN" : "KURANG";
     const aoa = [["No Pesanan","Channel - Nama Toko","SKU","Nama Barang","Qty Pesan","Qty Siap Ambil","Kurang","Status","Lokasi Bin (ambil dari)","Batas Kirim Asli","Batas Kirim (TikTok -2 hari)"]]
       .concat(list.map(r => { const s = stock[r.sku.toUpperCase()], f = info.get(r) || { t: 0, txt: "" };
         return [r.ord || "", r.channel, r.sku, s ? s.nama : "", r.qty, f.t, r.qty - f.t, stat(r, f.t), f.txt, r.due != null ? fmt(r.due) : "", deadline(r) != null ? fmt(deadline(r)) : ""]; }));
     // Daftar ambil per bin: diurutkan menurut bin (alur jalan picker), digabung per bin + SKU.
-    const pk = {};
-    list.forEach(r => { const f = info.get(r); if (!f) return; f.arr.forEach(([bin, u]) => {
-      const k = bin + "||" + r.sku.toUpperCase(); const o = pk[k] = pk[k] || { bin, sku: r.sku, nama: (stock[r.sku.toUpperCase()] || {}).nama || "", qty: 0, ords: new Set() };
-      o.qty += u; o.ords.add(r.ord || "(tanpa no)"); }); });
     const nat = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
-    const pickList = Object.values(pk).sort((a, b) => nat(a.bin, b.bin) || nat(a.sku, b.sku));
-    const aoa2 = [["Bin","SKU","Nama Barang","Qty Ambil","Jumlah Pesanan","No Pesanan","Cek (✓)"]]
-      .concat(pickList.map(o => [o.bin, o.sku, o.nama, o.qty, o.ords.size, [...o.ords].join(", "), ""]));
-    aoa2.push(["TOTAL","","", pickList.reduce((a, o) => a + o.qty, 0), "", "", ""]);
+    const pickList = buildPickList(list, info, stock);
+    const aoa2 = [["Bin","SKU","Nama Barang","Qty Ambil","Jumlah Pesanan","No Pesanan","Gudang","Cek (✓)"]]
+      .concat(pickList.map(o => [o.bin, o.sku, o.nama, o.qty, o.ords.size, [...o.ords].join(", "), o.besar ? "Gudang Besar (transfer dulu)" : "RTS", ""]));
+    aoa2.push(["TOTAL","","", pickList.reduce((a, o) => a + o.qty, 0), "", "", "", ""]);
     const kur = {};
     list.forEach(r => { const f = info.get(r) || { t: 0 }, k = r.qty - f.t; if (k > 0){ const o = kur[r.sku.toUpperCase()] = kur[r.sku.toUpperCase()] || { sku: r.sku, nama: (stock[r.sku.toUpperCase()] || {}).nama || "", qty: 0 }; o.qty += k; } });
     const aoa3 = [["SKU","Nama Barang","Qty Kurang (belum ada stok)"]].concat(Object.values(kur).sort((a, b) => nat(a.sku, b.sku)).map(o => [o.sku, o.nama, o.qty]));
     const wb = XLSX.utils.book_new();
     const w1 = XLSX.utils.aoa_to_sheet(aoa), w2 = XLSX.utils.aoa_to_sheet(aoa2), w3 = XLSX.utils.aoa_to_sheet(aoa3);
     w1["!cols"] = [{wch:24},{wch:28},{wch:14},{wch:36},{wch:9},{wch:13},{wch:8},{wch:10},{wch:34},{wch:17},{wch:22}];
-    w2["!cols"] = [{wch:14},{wch:14},{wch:40},{wch:10},{wch:14},{wch:60},{wch:9}];
+    w2["!cols"] = [{wch:14},{wch:14},{wch:40},{wch:10},{wch:14},{wch:60},{wch:26},{wch:9}];
     w3["!cols"] = [{wch:14},{wch:40},{wch:26}];
     XLSX.utils.book_append_sheet(wb, w2, "Daftar Ambil per Bin");
     XLSX.utils.book_append_sheet(wb, w1, "Pendingan");
