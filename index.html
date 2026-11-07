@@ -3247,19 +3247,23 @@ function toast(msg, type=""){
   const getCtx = () => { try { if(!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)(); if(ctx.state === "suspended") ctx.resume(); } catch(e){ ctx = null; } return ctx; };
   // browser mewajibkan interaksi pengguna dulu sebelum audio boleh bunyi: aktifkan saat klik / ketik / scan pertama
   ["pointerdown","keydown","touchstart"].forEach(ev => window.addEventListener(ev, getCtx, { once: false, passive: true, capture: true }));
+  // Master: kompresor + gain supaya keras tapi tidak pecah. Nada dibuat tinggi (1-2 kHz) karena speaker HP/scanner lemah di nada rendah.
+  let master = null;
+  const getMaster = c => { if(master && master.context === c) return master; const comp = c.createDynamicsCompressor(), g = c.createGain(); g.gain.value = 1.6; comp.connect(g); g.connect(c.destination); master = comp; return master; };
   const tone = (c, f, t0, dur, type, vol) => {
     const o = c.createOscillator(), g = c.createGain();
-    o.type = type; o.frequency.value = f; o.connect(g); g.connect(c.destination);
-    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.type = type; o.frequency.value = f; o.connect(g); g.connect(getMaster(c));
+    // envelope: naik cepat, TAHAN penuh, baru turun di ujung (tidak langsung meredup seperti sebelumnya)
+    g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(vol, t0 + 0.008); g.gain.setValueAtTime(vol, t0 + dur - 0.03); g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
     o.start(t0); o.stop(t0 + dur + 0.02);
   };
   window.scanBeep = function(kind){
     if(off) return;
     const now = Date.now(); if(now - last < 120) return; last = now; // scan beruntun / upload massal: tidak numpuk
     const c = getCtx(); if(!c) return; const t = c.currentTime;
-    if(kind === "bad"){ tone(c, 200, t, 0.16, "sawtooth", 0.22); tone(c, 200, t + 0.2, 0.16, "sawtooth", 0.22); }
-    else if(kind === "warn"){ tone(c, 600, t, 0.22, "triangle", 0.3); }
-    else { tone(c, 988, t, 0.09, "square", 0.16); tone(c, 1480, t + 0.1, 0.14, "square", 0.16); }
+    if(kind === "bad"){ tone(c, 440, t, 0.22, "square", 0.9); tone(c, 330, t + 0.26, 0.22, "square", 0.9); tone(c, 440, t + 0.52, 0.22, "square", 0.9); }
+    else if(kind === "warn"){ tone(c, 1000, t, 0.14, "square", 0.9); tone(c, 1000, t + 0.2, 0.14, "square", 0.9); }
+    else { tone(c, 1568, t, 0.14, "square", 0.9); tone(c, 2093, t + 0.15, 0.22, "square", 0.9); }
   };
   const mkToggle = () => {
     if(document.getElementById("soundToggle")) return;
