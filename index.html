@@ -9553,10 +9553,14 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     return `<span style="color:${col}; font-weight:700;">${fmt(ms)}</span>${diff < 0 ? ' <span class="badge danger">TERLAMBAT</span>' : ''}`;
   };
 
+  // Nama barang: stok scan -> Master Produk -> nama dari file upload (supaya SKU yang stoknya kosong tetap ada namanya)
+  let nameCache = {};
+  const nameOf = (stock, sku, row) => { const k = String(sku || "").toUpperCase(); return (stock && stock[k] && stock[k].nama) || nameCache[k] || (row && row.nama) || ""; };
   const stokCell = st => st > 0 ? `<span class="badge success" title="Stok sudah ada di gudang">✅ ${st}</span>` : `0`;
   async function stockMap(){
     const m = {};
     try {
+      try { const nc = {}; (await idbGetAllMaster()).forEach(p => { if (p && p.sku && p.nama) nc[String(p.sku).trim().toUpperCase()] = p.nama; }); nameCache = nc; } catch(e){ console.warn("Master nama gagal dimuat:", e); }
       (await idbGetAllScans()).forEach(r => {
         if (!r || r.type === "OUT" || isRejectRow_(r)) return;
         const k = String(r.sku || "").toUpperCase();
@@ -9616,7 +9620,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   function buildPickList(list, info, stock){
     const pk = {};
     list.forEach(r => { const f = info.get(r); if (!f) return; f.arr.forEach(([bin, u, bsr]) => {
-      const k = bin + "||" + r.sku.toUpperCase(); const o = pk[k] = pk[k] || { bin, sku: r.sku, nama: (stock[r.sku.toUpperCase()] || {}).nama || "", qty: 0, ords: new Set(), besar: !!bsr };
+      const k = bin + "||" + r.sku.toUpperCase(); const o = pk[k] = pk[k] || { bin, sku: r.sku, nama: nameOf(stock, r.sku, r), qty: 0, ords: new Set(), besar: !!bsr };
       o.qty += u; o.ords.add(r.ord || "(tanpa no)"); }); });
     const nat = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
     return Object.values(pk).sort((a, b) => (a.besar ? 1 : 0) - (b.besar ? 1 : 0) || nat(a.bin, b.bin) || nat(a.sku, b.sku));
@@ -9660,7 +9664,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   function filtered(){
     const q = ($("pdSearch").value || "").toLowerCase().trim();
     return rows.filter(r => (chan === "all" || platOf(r.channel) === chan) &&
-      (!q || r.sku.toLowerCase().includes(q) || r.channel.toLowerCase().includes(q) || (r.ord || "").toLowerCase().includes(q)));
+      (!q || r.sku.toLowerCase().includes(q) || r.channel.toLowerCase().includes(q) || (r.ord || "").toLowerCase().includes(q) || nameOf(null, r.sku, r).toLowerCase().includes(q)));
   }
 
   async function render(){
@@ -9692,7 +9696,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       head.innerHTML = `<tr><th>No Pesanan</th><th>Channel</th><th>Batas Kirim</th><th>Isi Pesanan</th><th style="text-align:center;">Qty</th><th style="text-align:center;">Status Stok</th><th style="text-align:center;">Aksi</th></tr>`;
       body.innerHTML = show.map(o => {
         const l0 = o.lines[0], orig = isTiktok(l0) && l0.due != null ? `<div class="hint" style="font-size:10px;">asli ${fmt(Math.min(...o.lines.map(r => r.due ?? 9e15)))} (−${TIKTOK_MINUS_DAYS} hari)</div>` : "";
-        const items = o.lines.map(r => { const s = stock[r.sku.toUpperCase()], k = r.qty - alok.get(r); return `<div><b style="font-family:var(--font-mono);">${escUid_(r.sku)}</b> ${escUid_(s ? s.nama : "")} <b>×${r.qty}</b> ${k > 0 ? `<span style="color:var(--danger); font-weight:700;">(kurang ${k})</span>` : "✅"}${loc.get(r) ? `<div style="display:inline-block; margin:3px 0 4px 0; padding:2px 10px; border-radius:6px; background:rgba(88,166,255,.16); font-size:15px; font-family:var(--font-mono); color:var(--accent); font-weight:800; letter-spacing:.3px;">📍 ${escUid_(loc.get(r))}</div>` : ""}</div>`; }).join("");
+        const items = o.lines.map(r => { const k = r.qty - alok.get(r); return `<div><b style="font-family:var(--font-mono);">${escUid_(r.sku)}</b> ${escUid_(nameOf(stock, r.sku, r))} <b>×${r.qty}</b> ${k > 0 ? `<span style="color:var(--danger); font-weight:700;">(kurang ${k})</span>` : "✅"}${loc.get(r) ? `<div style="display:inline-block; margin:3px 0 4px 0; padding:2px 10px; border-radius:6px; background:rgba(88,166,255,.16); font-size:15px; font-family:var(--font-mono); color:var(--accent); font-weight:800; letter-spacing:.3px;">📍 ${escUid_(loc.get(r))}</div>` : ""}</div>`; }).join("");
         const stat = o.kurang === 0 ? `<span class="badge success">✅ Siap</span>` : o.kurang === o.qty ? `<span style="color:var(--danger); font-weight:800;">Kurang -${o.kurang}</span>` : `<span style="color:var(--warning); font-weight:800;">Sebagian -${o.kurang}</span>`;
         const act = o.ord ? `data-done-ord="${escUid_(o.key)}"` : `data-done-row="${rows.indexOf(l0)}"`;
         return `<tr${o.kurang === 0 ? ' style="background:rgba(46,160,67,.12);"' : ""}><td style="font-family:var(--font-mono); font-weight:700;">${escUid_(o.ord || "-")}</td><td>${escUid_(o.ch)}</td><td>${dueBadge(o.due)}${orig}</td><td>${items}</td><td style="text-align:center; font-weight:700;">${o.qty}</td><td style="text-align:center;">${stat}</td><td style="text-align:center;"><button class="btn btn-accent btn-sm" ${act} title="Tandai sudah di-outbound & hapus dari pendingan">✔ Selesai</button></td></tr>`;
@@ -9704,7 +9708,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       rows.forEach(r => {
         const d = deadline(r), day = d == null ? "-" : new Date(new Date(d).setHours(0,0,0,0)).getTime();
         const k = r.sku.toUpperCase() + "||" + r.channel.toLowerCase() + "||" + day;
-        const o = g[k] = g[k] || { sku: r.sku, ch: r.channel, qty: 0, n: 0, due: null, day };
+        const o = g[k] = g[k] || { sku: r.sku, ch: r.channel, qty: 0, n: 0, due: null, day, nama: r.nama || "" };
         o.qty += r.qty; o.n++; if (d != null && (o.due == null || d < o.due)) o.due = d;
       });
       const all = Object.values(g).sort((a, b) => (a.due ?? 9e15) - (b.due ?? 9e15) || a.sku.localeCompare(b.sku) || a.ch.localeCompare(b.ch));
@@ -9716,7 +9720,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       head.innerHTML = `<tr><th>SKU</th><th>Nama Barang</th><th>Channel</th><th>Batas Kirim</th><th style="text-align:center;">Pesanan</th><th style="text-align:center;">Qty Pending</th><th style="text-align:center;">Stok Gudang</th><th style="text-align:center;">Tertutup Stok</th><th style="text-align:center;">Kurang</th><th>Lokasi Bin</th>${hasOrd ? "" : `<th style="text-align:center;">Aksi</th>`}</tr>`;
       body.innerHTML = show.map(o => {
         const s = stock[o.sku.toUpperCase()], st = s ? s.qty : 0;
-        return `<tr${o.alok > 0 ? ' style="background:rgba(46,160,67,.12);"' : ""}><td style="font-family:var(--font-mono); font-weight:700;">${escUid_(o.sku)}</td><td>${escUid_(s ? s.nama : "-")}</td><td>${escUid_(o.ch)}</td><td>${dueBadge(o.due)}</td><td style="text-align:center;">${o.n}</td><td style="text-align:center; font-weight:700;">${o.qty}</td><td style="text-align:center;">${stokCell(st)}</td><td style="text-align:center; font-weight:700; color:var(--success);">${o.alok}</td><td style="text-align:center; font-weight:800; color:${o.kurang > 0 ? "var(--danger)" : "var(--success)"};">${o.kurang > 0 ? "-" + o.kurang : "✓"}</td><td style="font-family:var(--font-mono); font-size:15px; font-weight:800; color:var(--accent);">${escUid_(o.loc || "-")}</td>${hasOrd ? "" : `<td style="text-align:center;"><button class="btn btn-accent btn-sm" data-done-g="1" data-sku="${escUid_(o.sku)}" data-ch="${escUid_(o.ch)}" data-day="${o.day}" data-qty="${o.qty}" title="Tandai sudah di-outbound & hapus dari pendingan">✔ Selesai</button></td>`}</tr>`;
+        return `<tr${o.alok > 0 ? ' style="background:rgba(46,160,67,.12);"' : ""}><td style="font-family:var(--font-mono); font-weight:700;">${escUid_(o.sku)}</td><td>${escUid_(nameOf(stock, o.sku, o) || "-")}</td><td>${escUid_(o.ch)}</td><td>${dueBadge(o.due)}</td><td style="text-align:center;">${o.n}</td><td style="text-align:center; font-weight:700;">${o.qty}</td><td style="text-align:center;">${stokCell(st)}</td><td style="text-align:center; font-weight:700; color:var(--success);">${o.alok}</td><td style="text-align:center; font-weight:800; color:${o.kurang > 0 ? "var(--danger)" : "var(--success)"};">${o.kurang > 0 ? "-" + o.kurang : "✓"}</td><td style="font-family:var(--font-mono); font-size:15px; font-weight:800; color:var(--accent);">${escUid_(o.loc || "-")}</td>${hasOrd ? "" : `<td style="text-align:center;"><button class="btn btn-accent btn-sm" data-done-g="1" data-sku="${escUid_(o.sku)}" data-ch="${escUid_(o.ch)}" data-day="${o.day}" data-qty="${o.qty}" title="Tandai sudah di-outbound & hapus dari pendingan">✔ Selesai</button></td>`}</tr>`;
       }).join("");
     }
   }
@@ -9830,7 +9834,8 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       const out = data.filter(o => !isGift(o)).map(o => ({
         channel: String(pick(o, /^channel/)).trim(), sku: String(pick(o, /^sku/)).trim(),
         ord: String(pick(o, /(no\.?|nomor|id|kode)\s*(pesanan|order|invoice)|order\s*(id|no|number|sn)|^(pesanan|order|invoice)$|invoice/)).trim(),
-        qty: parseInt(pick(o, /^jumlah|^qty/), 10) || 0, due: toMs(pick(o, /dikirim|batas/))
+        qty: parseInt(pick(o, /^jumlah|^qty/), 10) || 0, due: toMs(pick(o, /dikirim|batas/)),
+        nama: String(pick(o, /^nama\s*(produk|barang|item|sku)|^product\s*name|^item\s*name|^nama$/)).trim()
       })).filter(r => r.sku && r.qty > 0);
       if (!out.length){ toast("Tidak ada baris valid. Pastikan kolom: Channel - Nama Toko, SKU Master, Jumlah, Dikirim Sebelum.", "bad"); return; }
       // Upload baru = data lama dibersihkan total: daftar pendingan, catatan Selesai lama, dan undo dikosongkan,
@@ -9873,7 +9878,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     const stat = (r, t) => t >= r.qty ? "SIAP" : t > 0 ? "SEBAGIAN" : "KURANG";
     const aoa = [["No Pesanan","Channel - Nama Toko","SKU","Nama Barang","Qty Pesan","Qty Siap Ambil","Kurang","Status","Lokasi Bin (ambil dari)","Batas Kirim Asli","Batas Kirim (TikTok -2 hari)"]]
       .concat(list.map(r => { const s = stock[r.sku.toUpperCase()], f = info.get(r) || { t: 0, txt: "" };
-        return [r.ord || "", r.channel, r.sku, s ? s.nama : "", r.qty, f.t, r.qty - f.t, stat(r, f.t), f.txt, r.due != null ? fmt(r.due) : "", deadline(r) != null ? fmt(deadline(r)) : ""]; }));
+        return [r.ord || "", r.channel, r.sku, nameOf(stock, r.sku, r), r.qty, f.t, r.qty - f.t, stat(r, f.t), f.txt, r.due != null ? fmt(r.due) : "", deadline(r) != null ? fmt(deadline(r)) : ""]; }));
     // Daftar ambil per bin: diurutkan menurut bin (alur jalan picker), digabung per bin + SKU.
     const nat = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
     const pickList = buildPickList(list, info, stock);
@@ -9881,7 +9886,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       .concat(pickList.map(o => [o.bin, o.sku, o.nama, o.qty, o.ords.size, [...o.ords].join(", "), o.besar ? "Gudang Besar (transfer dulu)" : "RTS", ""]));
     aoa2.push(["TOTAL","","", pickList.reduce((a, o) => a + o.qty, 0), "", "", "", ""]);
     const kur = {};
-    list.forEach(r => { const f = info.get(r) || { t: 0 }, k = r.qty - f.t; if (k > 0){ const o = kur[r.sku.toUpperCase()] = kur[r.sku.toUpperCase()] || { sku: r.sku, nama: (stock[r.sku.toUpperCase()] || {}).nama || "", qty: 0 }; o.qty += k; } });
+    list.forEach(r => { const f = info.get(r) || { t: 0 }, k = r.qty - f.t; if (k > 0){ const o = kur[r.sku.toUpperCase()] = kur[r.sku.toUpperCase()] || { sku: r.sku, nama: nameOf(stock, r.sku, r), qty: 0 }; o.qty += k; } });
     const aoa3 = [["SKU","Nama Barang","Qty Kurang (belum ada stok)"]].concat(Object.values(kur).sort((a, b) => nat(a.sku, b.sku)).map(o => [o.sku, o.nama, o.qty]));
     const wb = XLSX.utils.book_new();
     const w1 = XLSX.utils.aoa_to_sheet(aoa), w2 = XLSX.utils.aoa_to_sheet(aoa2), w3 = XLSX.utils.aoa_to_sheet(aoa3);
