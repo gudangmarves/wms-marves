@@ -202,6 +202,8 @@
   th { color: var(--text-muted); font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid var(--border-light); }
   tbody tr:hover { background-color: var(--bg-hover); }
   td.sku { font-family: var(--font-mono); color: var(--text-muted); white-space: nowrap; }
+  td.sku .rfid-tag { display:inline-block; margin-top:4px; padding:2px 8px; border-radius:5px; background:rgba(124,77,189,.10); border:1px solid rgba(124,77,189,.28); font-size:13px; font-weight:800; letter-spacing:.6px; color:#7c4dbd; }
+  td.sku .rfid-tag b { font-size:10px; font-weight:700; color:#9a78cf; letter-spacing:.5px; margin-right:3px; }
 
   .badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
   .badge.good { background: var(--success-dim); color: var(--success); border: 1px solid rgba(16,126,62,0.35); }
@@ -3238,6 +3240,37 @@ function toast(msg, type=""){
   t.className = "toast show " + type;
   setTimeout(()=>t.className = "toast " + type, 2500);
 }
+/* ============ BUNYI SCAN (beep sukses / peringatan / gagal) ============ */
+(function initScanSound_(){
+  let ctx = null, last = 0, off = false;
+  try { off = localStorage.getItem("wms_sound_off") === "1"; } catch(e){}
+  const getCtx = () => { try { if(!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)(); if(ctx.state === "suspended") ctx.resume(); } catch(e){ ctx = null; } return ctx; };
+  // browser mewajibkan interaksi pengguna dulu sebelum audio boleh bunyi: aktifkan saat klik / ketik / scan pertama
+  ["pointerdown","keydown","touchstart"].forEach(ev => window.addEventListener(ev, getCtx, { once: false, passive: true, capture: true }));
+  const tone = (c, f, t0, dur, type, vol) => {
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = type; o.frequency.value = f; o.connect(g); g.connect(c.destination);
+    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  };
+  window.scanBeep = function(kind){
+    if(off) return;
+    const now = Date.now(); if(now - last < 120) return; last = now; // scan beruntun / upload massal: tidak numpuk
+    const c = getCtx(); if(!c) return; const t = c.currentTime;
+    if(kind === "bad"){ tone(c, 200, t, 0.16, "sawtooth", 0.22); tone(c, 200, t + 0.2, 0.16, "sawtooth", 0.22); }
+    else if(kind === "warn"){ tone(c, 600, t, 0.22, "triangle", 0.3); }
+    else { tone(c, 988, t, 0.09, "square", 0.16); tone(c, 1480, t + 0.1, 0.14, "square", 0.16); }
+  };
+  const mkToggle = () => {
+    if(document.getElementById("soundToggle")) return;
+    const b = document.createElement("button"); b.id = "soundToggle"; b.type = "button";
+    b.style.cssText = "position:fixed; right:14px; bottom:14px; z-index:9999; width:38px; height:38px; border-radius:50%; border:1px solid var(--border-light); background:var(--bg-card); box-shadow:0 2px 8px rgba(0,0,0,.18); font-size:18px; line-height:1; cursor:pointer; padding:0;";
+    const sync = () => { b.textContent = off ? "🔇" : "🔊"; b.title = off ? "Bunyi scan MATI (klik untuk menyalakan)" : "Bunyi scan menyala (klik untuk mematikan)"; };
+    b.onclick = () => { off = !off; try { localStorage.setItem("wms_sound_off", off ? "1" : "0"); } catch(e){} sync(); if(!off) window.scanBeep("ok"); };
+    sync(); document.body.appendChild(b);
+  };
+  if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", mkToggle); else mkToggle();
+})();
 function setConn(ok, text){
   const dot = document.getElementById("connDot");
   const txt = document.getElementById("connText");
@@ -3521,7 +3554,7 @@ async function handleScanCore(sku, uid){
         <div class="nama">Lokasi Bin wajib diisi sebelum scan. Barang tanpa Bin tidak dimasukkan ke staging maupun sistem.</div>
         <div style="margin-top:4px"><span class="badge bad">⛔ LOKASI BIN KOSONG — DITOLAK</span></div>
       </div>`;
-      toast("Isi Lokasi Bin dahulu. Scan ditolak dan tidak masuk ke sistem.", "bad");
+      toast("Isi Lokasi Bin dahulu. Scan ditolak dan tidak masuk ke sistem.", "bad"); scanBeep("bad");
       binInput.focus();
       return;
     }
@@ -3621,6 +3654,8 @@ async function handleScanCore(sku, uid){
     resultBox.insertAdjacentHTML("beforeend", `<div style="margin-top:6px"><span class="badge warning">⚠ ${escUid_(mutasiWarn)}</span></div>`);
     toast(mutasiWarn, "warning");
   }
+  scanBeep(product ? "ok" : "warn");
+  if(!mutasiWarn) toast(product ? "✓ Berhasil masuk staging: " + sku : "⚠ SKU tidak dikenali, tetap masuk staging: " + sku, product ? "good" : "warning");
   renderInboundLog();
   scanInput.focus();
 }
@@ -4024,7 +4059,7 @@ function renderInboundLogCore_(){
     tr.innerHTML = `
       <td>${jam} <span class="badge ${r.type==='REJECT'?'bad':(r.type==='RETUR'?'warning':'good')}">${r.type}</span></td>
       <td><span style="color:var(--accent); font-weight:bold;">${r.bin || '-'}</span>${r.docNo ? `<br><span style="font-size:10px; color:var(--text-muted);">DOK: ${r.docNo}</span>` : ''}</td>
-      <td class="sku">${r.sku}${r.uid ? `<br><span style="font-size:10px; color:var(--text-muted);">RFID: ${escUid_(r.uid)}</span>` : ''}</td>
+      <td class="sku">${r.sku}${r.uid ? `<br><span class="rfid-tag"><b>RFID</b> ${escUid_(r.uid)}</span>` : ''}</td>
       <td>${r.found ? r.nama : '<span class="badge bad">N/A</span>'}</td>
       <td style="text-align:center;"><button class="btn-delete" onclick="removeInboundStage(${realIdx})" title="Hapus dari Staging">🗑️</button></td>
     `;
@@ -4121,6 +4156,7 @@ async function executeDeductionCore(sku, bin, typeStr, remark, isSession = false
         document.getElementById("outStatFound").textContent = outboundStats.found;
         
         sessionOutboundScans.push({ id: target.id, ts: new Date().toISOString(), bin: target.bin, sku: target.sku, uid: target.uid || null, remark: remark, nama: target.nama });
+        scanBeep("ok");
         
         const resultBox = document.getElementById("outScanResult");
         if(resultBox) {
@@ -4150,7 +4186,7 @@ function renderOutboundLog() {
         tr.innerHTML = `
           <td>${jam}</td>
           <td><span style="color:var(--danger); font-weight:bold;">${r.bin || '-'}</span></td>
-          <td class="sku">${r.sku}${r.uid ? `<br><span style="font-size:10px; color:var(--text-muted);">RFID: ${escUid_(r.uid)}</span>` : ''}</td>
+          <td class="sku">${r.sku}${r.uid ? `<br><span class="rfid-tag"><b>RFID</b> ${escUid_(r.uid)}</span>` : ''}</td>
           <td>${r.remark || '-'}</td>
         `;
         tbody.appendChild(tr);
@@ -4270,6 +4306,7 @@ async function handleCCScanCore(sku, uid) {
       id: generateID(), sku: sku, uid: uid || null, nama: product ? product.nama : "Tidak Dikenali", found: !!product, bin: binValue, ts: new Date().toISOString()
   });
   
+  scanBeep(product ? "ok" : "warn");
   renderCCLog();
   ccScanInput.focus();
 }
@@ -4298,7 +4335,7 @@ function renderCCLog() {
         const realIdx = sessionCCScans.length - 1 - idx;
         tr.innerHTML = `
           <td><span style="color:var(--accent); font-weight:bold;">${r.bin}</span></td>
-          <td class="sku">${r.sku}${r.uid ? `<br><span style="font-size:10px; color:var(--text-muted);">RFID: ${escUid_(r.uid)}</span>` : ''}</td>
+          <td class="sku">${r.sku}${r.uid ? `<br><span class="rfid-tag"><b>RFID</b> ${escUid_(r.uid)}</span>` : ''}</td>
           <td>${r.nama}</td>
           <td style="text-align:center;"><button class="btn-delete" onclick="removeCCStage(${realIdx})" title="Hapus Staging">🗑️</button></td>
         `;
@@ -4651,7 +4688,7 @@ function renderTGLog_(){
   tbody.innerHTML = sessionTGScans.slice().reverse().slice(0, LIMIT).map((r, k) => {
     const idx = sessionTGScans.length - 1 - k;
     return '<tr><td><span class="badge muted">' + escUid_(WH_LABEL_[r.fromWh]) + '</span> ' + escUid_(r.fromBin) + '</td><td><span class="badge ' + (r.toWh === WH_BESAR ? 'warning' : 'good') + '">' + escUid_(WH_LABEL_[r.toWh]) + '</span> ' + escUid_(r.toBin) +
-      '</td><td class="sku">' + escUid_(r.sku) + (r.uid ? '<br><span style="font-size:10px; color:var(--text-muted);">RFID: ' + escUid_(r.uid) + '</span>' : '') + '</td><td>' + escUid_(r.nama) +
+      '</td><td class="sku">' + escUid_(r.sku) + (r.uid ? '<br><span class="rfid-tag"><b>RFID</b> ' + escUid_(r.uid) + '</span>' : '') + '</td><td>' + escUid_(r.nama) +
       '</td><td style="text-align:center;"><button class="btn-delete" onclick="removeTGStage(' + idx + ')" title="Hapus dari staging">🗑️</button></td></tr>';
   }).join("") + (sessionTGScans.length > LIMIT ? '<tr><td colspan="5" class="hint" style="text-align:center;">Menampilkan ' + LIMIT + ' dari ' + sessionTGScans.length + ' item terbaru.</td></tr>' : "");
 }
@@ -4697,8 +4734,9 @@ async function handleTGScanCore(sku, uid){
     sessionTGScans.push({ stagingId: generateID(), rowId: cand.id, sku: cand.sku, nama: cand.nama || 'N/A', uid: cand.uid || null, fromBin: cand.bin || '-', toBin, fromWh: dir.from, toWh: dir.to, doc, ts: new Date().toISOString() });
     box.innerHTML = '<div class="result found"><div class="sku"><span class="badge muted">' + escUid_(WH_LABEL_[dir.from]) + ': ' + escUid_(cand.bin || '-') + '</span> <span class="badge transfer">' + escUid_(WH_LABEL_[dir.to]) + ': ' + escUid_(toBin) + '</span> ' + escUid_(cand.sku) +
       '</div><div class="nama">' + escUid_(cand.nama || 'N/A') + '</div><div style="margin-top:4px"><span class="badge good">STAGED (BELUM EKSEKUSI)</span></div></div>';
+    scanBeep("ok");
     renderTGLog_();
-  } catch(err){ console.error(err); toast("Gagal memindai untuk Transfer Gudang", "bad"); }
+  } catch(err){ console.error(err); toast("Gagal memindai untuk Transfer Gudang", "bad"); scanBeep("bad"); }
   scanEl.focus();
 }
 
@@ -4800,10 +4838,11 @@ async function handleTransferScanCore(sku, uid) {
           fromBin, toBin, ts: new Date().toISOString(), found: true
       });
 
+      scanBeep("ok");
       renderTransferLog();
   } catch (err) {
       console.error(err);
-      toast("Gagal memindai untuk Transfer Bin", "bad");
+      toast("Gagal memindai untuk Transfer Bin", "bad"); scanBeep("bad");
   }
   tfScanInput.focus();
 }
