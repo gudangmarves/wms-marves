@@ -1399,7 +1399,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
           <h3 class="card-header" style="margin-bottom: 10px;">Tracking Movement (IN/OUT/SALES/RETUR)</h3>
           
           <div class="toolbar-row">
-            <input type="text" id="moveSearchSku" class="input-sm toolbar-search" placeholder="🔍 Cari SKU / RFID / Keyword..." autocomplete="off">
+            <input type="text" id="moveSearchSku" class="input-sm toolbar-search" placeholder="🔍 Cari apa saja: SKU, RFID, bin, nama, tipe, oleh, tanggal, dikembalikan..." title="Cari di semua kolom. Beberapa kata dipisah spasi = semuanya harus cocok. Export mengikuti filter ini." autocomplete="off">
             <button class="btn btn-ghost btn-sm" id="btnSkuSummary" title="Lihat Ringkasan Total IN/OUT/RETUR/SALES untuk SKU ini">📊 Summary</button>
             <input type="date" id="moveStartDate" class="input-sm toolbar-date" title="Dari Tanggal">
             <span class="toolbar-sep">–</span>
@@ -1408,7 +1408,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
             <button class="btn btn-ghost btn-sm" id="btnResetMove">Reset</button>
             <div class="toolbar-spacer"></div>
             <span class="toolbar-count">Log: <b id="statMoveQty">0</b></span>
-            <button class="btn btn-ghost btn-sm" id="btnExportMovements" title="Export Excel Tracking">⬇️ Export</button>
+            <button class="btn btn-ghost btn-sm" id="btnExportMovements" title="Export hasil sesuai filter yang aktif (kosongkan filter untuk export semua data)">⬇️ Export</button>
             <button class="btn btn-danger btn-sm" id="btnClearMovements" title="Bersihkan log TRANSFER saja (Inbound/Outbound/Sales/Retur/Delete tetap disimpan)">🗑️ Transfer</button>
             <button class="btn btn-danger btn-sm" id="btnClearMovementsAll" title="Hapus SEMUA Movement Log — Lokal &amp; Cloud (Google Sheets)">🗑️ Semua (Cloud)</button>
           </div>
@@ -8144,36 +8144,57 @@ document.getElementById("fileUploadScan").addEventListener("change", async (e) =
    ============================================================ */
 let moveRenderLimit = 200;
 
+const MOVE_TYPES_ = ['INBOUND', 'OUTBOUND', 'SALES', 'RETUR', 'DELETE', 'REJECT', 'REJECT_RESTORE', 'UNDO_OUTBOUND'];
+const MOVE_TYPE_LABEL_ = { INBOUND:'INBOUND', OUTBOUND:'OUTBOUND', SALES:'SALES', RETUR:'RETUR', DELETE:'DELETE', REJECT:'REJECT', REJECT_RESTORE:'BATAL REJECT', UNDO_OUTBOUND:'BATAL OUTBOUND' };
+
+/* Filter Tracking Movement (dipakai tabel DAN Export, supaya hasil Export selalu sama dengan yang tampil).
+   Pencarian bebas: mencari di SEMUA kolom (waktu, tipe, bin, SKU, RFID, keterangan, nama, dokumen, oleh, status dikembalikan/dihapus).
+   Beberapa kata dipisah spasi = semuanya harus cocok (AND). */
+async function getMovementFilteredRows_(filterText = "", startDate = "", endDate = "") {
+  const rows = await idbGetAllMovements();
+  let validRows = rows.filter(r => r && MOVE_TYPES_.includes(r.type));
+
+  // RFID: log baru menyimpan uid langsung; log lama dicocokkan lewat ref_id ke unit yang RFID-nya masih ada di stok.
+  const uidByRef = new Map();
+  try { (await getUidIndex()).forEach((row, u) => { if (row && row.id) uidByRef.set(row.id, u); }); } catch(e) {}
+  const uidOf = (r) => r.uid || (r.ref_id ? uidByRef.get(r.ref_id) : "") || "";
+
+  const tokens = String(filterText || "").toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length) {
+    validRows = validRows.filter(r => {
+      const d = r.ts ? new Date(r.ts) : null;
+      const okDate = d && !isNaN(d);
+      const pad = n => String(n).padStart(2, "0");
+      const isOpname = String(r.ref_id || '').startsWith('OPNAME_');
+      const status = r.reverted ? (r.type === 'INBOUND' ? 'dihapus' : 'dikembalikan') : '';
+      const hay = [
+        okDate ? d.toLocaleString("id-ID") : "",
+        okDate ? `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}` : "",
+        r.type, MOVE_TYPE_LABEL_[r.type], (isOpname && (r.type === 'INBOUND' || r.type === 'OUTBOUND')) ? 'so pi opname' : '',
+        r.bin, r.sku, uidOf(r), r.nama, r.remark, r.docNo, r.by, r.ref_id, status
+      ].join(" | ").toLowerCase();
+      return tokens.every(t => hay.includes(t));
+    });
+  }
+
+  if (startDate || endDate) {
+    const start = startDate ? new Date(startDate) : new Date("2000-01-01");
+    start.setHours(0,0,0,0);
+    const end = endDate ? new Date(endDate) : new Date("2099-12-31");
+    end.setHours(23,59,59,999);
+    validRows = validRows.filter(r => {
+      if (!r.ts) return false;
+      const d = new Date(r.ts);
+      return d >= start && d <= end;
+    });
+  }
+  return { rows: validRows, uidOf };
+}
+
 async function loadMovements(filterSku = "", startDate = "", endDate = "") {
   try {
-      const rows = await idbGetAllMovements();
-      let validRows = rows.filter(r => r !== null && r !== undefined);
-      
-      validRows = validRows.filter(r => ['INBOUND', 'OUTBOUND', 'SALES', 'RETUR', 'DELETE', 'REJECT', 'REJECT_RESTORE', 'UNDO_OUTBOUND'].includes(r.type));
+      const { rows: validRows, uidOf: uidOf_ } = await getMovementFilteredRows_(filterSku, startDate, endDate);
 
-      // RFID: log baru menyimpan uid langsung; log lama dicocokkan lewat ref_id ke unit yang RFID-nya masih ada di stok.
-      const uidByRef = new Map();
-      try { (await getUidIndex()).forEach((row, u) => { if (row && row.id) uidByRef.set(row.id, u); }); } catch(e) {}
-      const uidOf_ = (r) => r.uid || (r.ref_id ? uidByRef.get(r.ref_id) : "") || "";
-
-      if (filterSku) {
-          const q = filterSku.toLowerCase().trim();
-          validRows = validRows.filter(r => (r.sku && r.sku.toLowerCase().includes(q)) || (uidOf_(r) && uidOf_(r).toLowerCase().includes(q)) || (r.remark && r.remark.toLowerCase().includes(q)) || (r.docNo && r.docNo.toLowerCase().includes(q)));
-      }
-      
-      if (startDate || endDate) {
-          const start = startDate ? new Date(startDate) : new Date("2000-01-01");
-          start.setHours(0,0,0,0);
-          const end = endDate ? new Date(endDate) : new Date("2099-12-31");
-          end.setHours(23,59,59,999);
-          
-          validRows = validRows.filter(r => {
-             if (!r.ts) return false;
-             const d = new Date(r.ts);
-             return d >= start && d <= end;
-          });
-      }
-      
       const statQty = document.getElementById("statMoveQty");
       if(statQty) statQty.textContent = validRows.length;
 
@@ -8421,6 +8442,17 @@ document.getElementById("btnSearchMove").onclick = () => {
    const ed = document.getElementById("moveEndDate").value;
    loadMovements(s, sd, ed);
 };
+(function(){
+  let t = null;
+  document.getElementById("moveSearchSku").addEventListener("input", () => {
+    clearTimeout(t);
+    t = setTimeout(() => document.getElementById("btnSearchMove").click(), 300);
+  });
+  document.getElementById("moveSearchSku").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); clearTimeout(t); document.getElementById("btnSearchMove").click(); }
+  });
+  ["moveStartDate","moveEndDate"].forEach(id => document.getElementById(id).addEventListener("change", () => document.getElementById("btnSearchMove").click()));
+})();
 document.getElementById("btnResetMove").onclick = () => {
    document.getElementById("moveSearchSku").value = "";
    document.getElementById("moveStartDate").value = "";
@@ -8522,27 +8554,32 @@ document.getElementById("moveSearchSku").addEventListener("keydown", (e) => {
 document.getElementById("btnCloseSkuSummary").onclick = () => document.getElementById("skuSummaryModal").classList.remove("show");
 
 document.getElementById("btnExportMovements").onclick = async ()=>{
-  const rows = await idbGetAllMovements();
-  const validRows = rows.filter(r => r !== null && r !== undefined && ['INBOUND', 'OUTBOUND', 'SALES', 'RETUR', 'DELETE'].includes(r.type));
-  if(validRows.length === 0){ toast("Tidak ada log", ""); return; }
-  
-  const uidByRefX = new Map();
-  try { (await getUidIndex()).forEach((row, u) => { if (row && row.id) uidByRefX.set(row.id, u); }); } catch(e) {}
-  const wsData = validRows.map(r=>({
+  // Export mengikuti filter yang sedang aktif (kata kunci + tanggal). Tanpa filter = semua data.
+  const q  = document.getElementById("moveSearchSku").value;
+  const sd = document.getElementById("moveStartDate").value;
+  const ed = document.getElementById("moveEndDate").value;
+  const { rows: validRows, uidOf } = await getMovementFilteredRows_(q, sd, ed);
+  if(validRows.length === 0){ toast("Tidak ada log untuk diexport pada filter saat ini.", "warning"); return; }
+
+  const wsData = validRows.slice().reverse().map(r=>({
     "Waktu Eksekusi": r.ts ? new Date(r.ts).toLocaleString("id-ID") : "-",
-    "Tipe Eksekusi": r.type || "-",
+    "Tipe Eksekusi": MOVE_TYPE_LABEL_[r.type] || r.type || "-",
     "Bin Info": r.bin || "-",
-    "SKU": r.sku,
-    "RFID": r.uid || (r.ref_id ? uidByRefX.get(r.ref_id) : "") || "-",
+    "SKU": r.sku || "-",
+    "RFID": uidOf(r) || "-",
     "Nama Barang": r.nama || "-",
     "No Dokumen": r.docNo || "-",
-    "Keterangan / Remark": r.remark || "-"
+    "Keterangan / Remark": r.remark || "-",
+    "Oleh": r.by || "-",
+    "Status": r.reverted ? (r.type === 'INBOUND' ? "DIHAPUS" : "DIKEMBALIKAN") : "-"
   }));
-  
+
   const ws = XLSX.utils.json_to_sheet(wsData);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Log Movement Lokal");
-  XLSX.writeFile(wb, `Tracking_Movement_Lokal_${Date.now()}.xlsx`);
+  XLSX.utils.book_append_sheet(wb, ws, "Log Movement");
+  const filtered = !!(String(q).trim() || sd || ed);
+  XLSX.writeFile(wb, `Tracking_Movement_${filtered ? "Filter" : "Semua"}_${Date.now()}.xlsx`);
+  toast(`✓ Export ${wsData.length} baris (${filtered ? "sesuai filter" : "semua data"})`, "good");
 };
 
 document.getElementById("btnClearMovements").onclick = async ()=>{
