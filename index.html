@@ -4619,6 +4619,12 @@ document.getElementById("btnExecCC").onclick = async () => {
       };
 
       for(let id of localIdsToDelete) { await idbDeleteScan(id); }
+      // Jejak per RFID: unit yang ikut terhapus karena Bin di-clear tapi TIDAK discan ulang, supaya bisa dilacak lewat Tracking Movement.
+      for (const r of rowsToDelete) {
+          if (r.uid && !stagedUidSet.has(normUid_(r.uid))) {
+              await recordMovement(r.id, "DELETE", r.sku, r.nama || "-", r.bin || "-", "Hilang dari stok: tidak discan saat Cycle Count Bin " + (r.bin || "-"), "", r.uid);
+          }
+      }
       await recordMovement("CC_CLEAR", "CC_CLEAR", "-", "-", uniqueBins.join(","), `Clear Bin Sebelum Cycle Count (${localIdsToDelete.length} item dihapus)`);
 
       for(let item of sessionCCScans) {
@@ -5516,7 +5522,7 @@ window.deleteMasterRow = async function(id) {
     const target = rows.find(r=>String(r.id) === stringId);
     
     await idbDeleteScan(stringId);
-    if (target) await recordMovement(stringId, "DELETE", target.sku, target.nama, target.bin, "Manual Hapus Data Induk");
+    if (target) await recordMovement(stringId, "DELETE", target.sku, target.nama, target.bin, "Manual Hapus Data Induk", "", target.uid);
     await loadAllScan();
     toast("✓ Data terhapus", "good");
   } catch(err) {
@@ -6822,6 +6828,12 @@ window.opSaveCount = async function (sku) {
       const takeOldTs = () => { const it = pool.find(x => !x.used); if (it) it.used = true; return it || null; };
 
       for (const r of oldRows) { await idbDeleteScan(r.id); }
+      // Jejak per RFID: unit lama yang tidak ikut discan saat Opname, supaya bisa dilacak lewat Tracking Movement.
+      for (const r of oldRows) {
+          if (r.uid && !scannedUids.has(normUid_(r.uid))) {
+              await recordMovement(r.id, "DELETE", r.sku, r.nama || "-", r.bin || "-", "Hilang dari stok: tidak discan saat Stock Opname Harian", "", r.uid);
+          }
+      }
 
       for (const s of scansForSku) {
           const kept = takeOldTs();
