@@ -205,6 +205,7 @@
   td.sku .rfid-tag { display:inline-block; margin-top:4px; padding:2px 8px; border-radius:5px; background:rgba(124,77,189,.10); border:1px solid rgba(124,77,189,.28); font-size:13px; font-weight:800; letter-spacing:.6px; color:#7c4dbd; }
   td.sku .rfid-tag b { font-size:10px; font-weight:700; color:#9a78cf; letter-spacing:.5px; margin-right:3px; }
 
+  .mv-nama { display:inline-block; margin-top:4px; padding:2px 9px; font-size:13px; font-weight:600; line-height:1.35; color:#3f7fb8; background:#e6f2fc; border:1px solid #c5def3; border-radius:999px; letter-spacing:.1px; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
   .badge.good { background: var(--success-dim); color: var(--success); border: 1px solid rgba(16,126,62,0.35); }
   .badge.bad { background: var(--danger-dim); color: var(--danger); border: 1px solid rgba(187,0,0,0.3); }
@@ -2060,7 +2061,6 @@ function curBy_(){ const u = curUser_(); return (u && u.name) ? u.name : ""; }
 // source file ini bisa membacanya. Untuk menambah/mengubah akun tertanam secara permanen, edit daftar ini.
 const SEED_USERS = [
   /*SEED_USERS_BEGIN*/
-  { name: "Erdinan", hash: "edff74a0727578edc4e5a1c41dbe2e25ea2a09d29d8390ada19714e2519aa59e", pw: "nadiaa123", role: "operator" },
   { name: "Indra", hash: "ed02f388ce4125b8e35f9d79a4fba9150a68f742b17256f3e10152d87b38f140", pw: "surya1212", role: "operator" },
   { name: "Outbound", hash: "526df9cdae29912d6c17a36b236947ba933fd434bce6e45a1614fc371c45ab89", pw: "34tQDP6G", role: "outbound" },
   { name: "admin", hash: "821bae8ac928b9568087361322a0185847944bb1663c4d7eb0fa532ec974e88f", role: "admin" },
@@ -2069,10 +2069,12 @@ const SEED_USERS = [
 function getUsers_(){
   let local = [];
   try{ const x = JSON.parse(localStorage.getItem(USERS_LS_KEY) || "[]"); if(Array.isArray(x)) local = x; }catch(e){}
-  const byName = new Map(local.map(u => [String(u.name).toLowerCase(), u]));
+  const gone = new Set(local.filter(u => u && u.deleted).map(u => String(u.name).toLowerCase())); // akun tertanam yang dihapus admin
+  const byName = new Map(local.filter(u => u && !u.deleted).map(u => [String(u.name).toLowerCase(), u]));
   const out = [];
   SEED_USERS.forEach(sd => {
     const key = String(sd.name).toLowerCase();
+    if(gone.has(key)) return;
     const ov = byName.get(key);
     // Password yang diubah admin di perangkat ini menang atas password dari file (hanya di perangkat ini).
     out.push(Object.assign({}, sd, ov ? { hash: ov.hash, pw: ov.pw, ov: true } : {}, { seed: true }));
@@ -2083,6 +2085,8 @@ function getUsers_(){
 }
 function saveUsers_(a){
   const store = a.filter(u => !u.seed || u.ov).map(u => ({ name: u.name, hash: u.hash, pw: u.pw, role: u.role, created: u.created }));
+  const present = new Set(a.map(u => String(u.name).toLowerCase()));
+  SEED_USERS.forEach(sd => { if(!present.has(String(sd.name).toLowerCase())) store.push({ name: sd.name, hash: "deleted", role: "deleted", deleted: true }); });
   localStorage.setItem(USERS_LS_KEY, JSON.stringify(store));
   pushUsersDiff_(store); // kirim perubahan akun ke cloud supaya semua komputer ikut berubah
 }
@@ -2101,7 +2105,7 @@ const isSysKey_ = k => String(k).startsWith(USR_PREFIX_) || String(k).startsWith
 const USR_MIG_KEY_ = "wms_users_cloud_migrated_v1";
 const USR_ROLES_ = { admin:1, operator:1, outbound:1, dashboard:1, search:1 };
 function usrKey_(name){ return USR_PREFIX_ + String(name).trim().toLowerCase(); }
-function usrToRow_(u){ return { id: usrKey_(u.name), name: String(u.name), hash: String(u.hash), pw: u.pw ? String(u.pw) : "", role: u.role, created: u.created || "" }; }
+function usrToRow_(u){ if(u.deleted) return { id: usrKey_(u.name), name: String(u.name), hash: "deleted", pw: "", role: "deleted", created: "" }; return { id: usrKey_(u.name), name: String(u.name), hash: String(u.hash), pw: u.pw ? String(u.pw) : "", role: u.role, created: u.created || "" }; }
 function usrRowValid_(r){ return r && typeof r.name === "string" && r.name.length > 0 && r.name.length <= 30 && /^[0-9a-f]{64}$/.test(String(r.hash)) && USR_ROLES_[r.role] === 1; }
 function idbGetUserRows_(){
   return new Promise((resolve)=>{
@@ -2130,8 +2134,10 @@ function pushUsersDiff_(store){
 // Bangun ulang cache akun (localStorage) dari data cloud yang sudah ditarik ke IndexedDB.
 async function reloadUsersFromIDB_(){
   if(localStorage.getItem(USR_MIG_KEY_) !== "1") return;
-  const rows = [...(await idbGetUserRows_()).values()].filter(usrRowValid_);
+  const all = [...(await idbGetUserRows_()).values()];
+  const rows = all.filter(usrRowValid_);
   const store = rows.map(r => ({ name: r.name, hash: r.hash, pw: r.pw || undefined, role: r.role, created: r.created || undefined }));
+  all.forEach(r => { if(r && r.role === "deleted" && typeof r.name === "string" && r.name) store.push({ name: r.name, hash: "deleted", role: "deleted", deleted: true }); });
   localStorage.setItem(USERS_LS_KEY, JSON.stringify(store));
 }
 // Setelah tarikan cloud pertama berhasil: kirim akun lokal yang BELUM ada di cloud (hanya menambah, tidak menimpa), lalu muat ulang cache.
@@ -2141,7 +2147,7 @@ async function syncUsersAfterPull_(){
     let local = [];
     try{ const x = JSON.parse(localStorage.getItem(USERS_LS_KEY) || "[]"); if(Array.isArray(x)) local = x; }catch(e){}
     const old = await idbGetUserRows_();
-    const add = local.filter(u => u && u.name && u.hash && USR_ROLES_[u.role] === 1 && !old.has(usrKey_(u.name))).map(usrToRow_);
+    const add = local.filter(u => u && u.name && u.hash && (USR_ROLES_[u.role] === 1 || u.deleted) && !old.has(usrKey_(u.name))).map(usrToRow_);
     if(add.length){ await idbRawPutMany_("masterbin", add); await idbEnqueueSync("masterbin", "put", add.map(r => r.id), add); }
     localStorage.setItem(USR_MIG_KEY_, "1");
   }
@@ -8262,7 +8268,7 @@ async function loadMovements(filterSku = "", startDate = "", endDate = "") {
           <td style="font-weight:bold;">${r.bin || '-'}</td>
           <td class="sku">${r.sku || '-'}</td>
           <td class="sku">${uidOf_(r) ? escUid_(uidOf_(r)) : '<span class="hint">-</span>'}</td>
-          <td>${safeRemark}${safeDocNo ? ` <span class="badge transfer">DOK: ${safeDocNo}</span>` : ''} <br> <span style="font-size:10px; color:var(--text-muted)">${safeNama}</span></td>
+          <td>${safeRemark}${safeDocNo ? ` <span class="badge transfer">DOK: ${safeDocNo}</span>` : ''} <br> <span class="mv-nama">${safeNama}</span></td>
           <td>${r.by ? escUid_(r.by) : '<span class="hint">-</span>'}</td>
           <td class="c">${aksiHtml}</td>
         `;
@@ -9383,10 +9389,12 @@ window.usrDelete = function(i){
   if(!isAdminNow_()) return;
   const list = getUsers_();
   const u = list[i]; if(!u) return;
-  if(u.seed){ toast("Akun tertanam tidak bisa dihapus dari sini (ada di file aplikasi).", "bad"); return; }
-  if(!confirm(`Hapus akun "${u.name}"? Riwayat transaksi atas nama ini tetap tersimpan.`)) return;
+  const nm = String(u.name).toLowerCase();
+  if(nm === "admin"){ toast("Akun \"admin\" bawaan tidak bisa dihapus.", "bad"); return; }
+  if(nm === String(curBy_()).toLowerCase()){ toast("Tidak bisa menghapus akun yang sedang Anda pakai.", "bad"); return; }
+  if(!confirm(`Hapus akun "${u.name}"?\n\nAkun ini tidak bisa login lagi di semua komputer. Riwayat transaksi atas nama ini tetap tersimpan.`)) return;
   list.splice(i, 1); saveUsers_(list);
-  toast("✓ Akun dihapus.", "good");
+  toast(CLOUD_CFG.url ? `✓ Akun ${u.name} dihapus (berlaku di semua komputer).` : `⚠ Akun ${u.name} dihapus hanya di komputer ini karena cloud (⚙️) belum diatur.`, CLOUD_CFG.url ? "good" : "warning");
   loadUsersTab();
 };
 
