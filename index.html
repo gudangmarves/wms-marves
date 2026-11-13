@@ -205,7 +205,7 @@
   td.sku .rfid-tag { display:inline-block; margin-top:4px; padding:2px 8px; border-radius:5px; background:rgba(124,77,189,.10); border:1px solid rgba(124,77,189,.28); font-size:13px; font-weight:800; letter-spacing:.6px; color:#7c4dbd; }
   td.sku .rfid-tag b { font-size:10px; font-weight:700; color:#9a78cf; letter-spacing:.5px; margin-right:3px; }
 
-  .mv-nama { display:inline-block; margin-top:3px; padding:1px 8px; font-size:11px; font-weight:600; line-height:1.4; color:#2a8f6b; background:#e4f7ef; border:1px solid #b7e5d2; border-radius:999px; letter-spacing:.2px; }
+  .mv-nama { display:inline-block; margin-top:3px; padding:1px 8px; font-size:11px; font-weight:600; line-height:1.4; color:#1f8a94; background:#e2f6f7; border:1px solid #b3e3e6; border-radius:999px; letter-spacing:.2px; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
   .badge.good { background: var(--success-dim); color: var(--success); border: 1px solid rgba(16,126,62,0.35); }
   .badge.bad { background: var(--danger-dim); color: var(--danger); border: 1px solid rgba(187,0,0,0.3); }
@@ -897,7 +897,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
               <h3 class="card-header">Pemindaian OUTBOUND (Keluar)</h3>
               <input id="outBinInput" class="bin-input input-sm" type="text" placeholder="Target Bin Barang Keluar (Wajib untuk SKU, opsional untuk RFID)" autocomplete="off">
               <input id="outRemarkInput" class="bin-input input-sm" type="text" placeholder="Remark / Catatan (Cth: SO-999)" autocomplete="off">
-              <input id="outScanInput" class="scan-input" type="text" placeholder="Tembak barcode SKU / RFID keluar..." autocomplete="off">
+              <input id="outScanInput" class="scan-input" type="text" placeholder="Tembak RFID keluar (SKU saja hanya bila stok lokasi tanpa RFID)..." autocomplete="off">
               <div id="outScanResult"></div>
             </div>
             <div class="card" id="outBulkCard" style="margin: 12px 0 0 0;">
@@ -1897,7 +1897,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
               <input type="password" id="usrPass" class="input-sm" placeholder="Password (min. 4 karakter)" autocomplete="new-password" style="flex:1; min-width:160px;">
               <select id="usrRole" class="input-sm" style="min-width:150px;">
                 <option value="operator">Operator (gudang)</option>
-                <option value="outbound">Tim Outbound (Data Bin Reject + Pencarian)</option>
+                <option value="outbound">Tim Outbound (Outbound + Data Bin Reject + Pencarian)</option>
                 <option value="admin">Admin</option>
                 <option value="dashboard">Dashboard saja</option>
                 <option value="search">Pencarian saja</option>
@@ -4124,7 +4124,7 @@ async function executeDeduction(sku, bin, typeStr, remark, isSession = false, ui
 async function executeDeductionCore(sku, bin, typeStr, remark, isSession = false, uid = null) {
     const skuNorm = String(sku).trim().toUpperCase();
     const isOutLike = (typeStr === 'OUTBOUND' || typeStr === 'SALES');
-    let target = null, blockedBesar = null, blockedReject = null;
+    let target = null, blockedBesar = null, blockedReject = null, blockedRfid = null;
     if (uid) {
         // RFID: cari unit persis dengan UID itu lewat indeks UID + baca ulang barisnya (tanpa memuat 44 ribu baris tiap scan)
         target = await findStockRowByUidFast_(uid);
@@ -4133,12 +4133,24 @@ async function executeDeductionCore(sku, bin, typeStr, remark, isSession = false
     } else {
         const allScans = (await idbGetAllScans()).filter(r => r !== null && r !== undefined);
         const inBin = allScans.filter(r => r.sku && r.sku.trim().toUpperCase() === skuNorm && (r.bin || '-') === bin && r.type !== 'OUT');
-        target = (isOutLike ? inBin.find(r => !isBesar_(r) && !isRejectRow_(r)) : inBin[0]) || null;
-        if (!target && isOutLike && inBin.length) { if (inBin.some(r => isRejectRow_(r))) blockedReject = inBin.find(r => isRejectRow_(r)); else blockedBesar = inBin[0]; }
+        if (typeStr === 'OUTBOUND') {
+            // Aturan RFID: SKU saja hanya boleh di-OUT bila unit di lokasi itu memang TIDAK tersimpan RFID.
+            const elig = inBin.filter(r => !isBesar_(r) && !isRejectRow_(r));
+            target = elig.find(r => !r.uid) || null;
+            if (!target && elig.length) blockedRfid = elig[0];
+        } else {
+            target = (isOutLike ? inBin.find(r => !isBesar_(r) && !isRejectRow_(r)) : inBin[0]) || null;
+        }
+        if (!target && !blockedRfid && isOutLike && inBin.length) { if (inBin.some(r => isRejectRow_(r))) blockedReject = inBin.find(r => isRejectRow_(r)); else blockedBesar = inBin[0]; }
     }
 
     if (!target) {
-        if (blockedReject) {
+        if (blockedRfid) {
+            toast(`Gagal: SKU ${sku} di Bin ${blockedRfid.bin || '-'} tersimpan dengan RFID. Wajib scan RFID, scan SKU saja tidak bisa di-OUT.`, "bad");
+            try{ scanBeep("bad"); }catch(e){}
+            const rb = document.getElementById("outScanResult");
+            if(isSession && rb) rb.innerHTML = `<div class="result"><div class="sku"><span class="badge muted">BIN: ${blockedRfid.bin || '-'}</span> ${sku}</div><div class="nama">Stok di lokasi ini memakai RFID</div><div style="margin-top:4px"><span class="badge bad">✗ GAGAL: WAJIB SCAN RFID</span></div></div>`;
+        } else if (blockedReject) {
             toast(`Barang ini berstatus REJECT (Bin ${blockedReject.bin || '-'}) dan tidak bisa di-${typeStr === 'SALES' ? 'sales' : 'outbound'}. Kembalikan dulu lewat menu Data Bin Reject bila sudah layak jual.`, "bad");
         } else if (blockedBesar) {
             toast(`Barang ada di Gudang Besar (Bin ${blockedBesar.bin || '-'}) dan tidak bisa langsung di-${typeStr === 'SALES' ? 'sales' : 'outbound'}. Transfer ke Gudang RTS dulu lewat menu Transfer Gudang.`, "bad");
@@ -9195,8 +9207,8 @@ function planOutboundBulk_(items, stockRows, codeOf){
       if(bin && (normBin(row.bin) || "-") !== bin) x.ket = `RFID tercatat di Bin ${row.bin || "-"} (file: ${bin}); diproses dari Bin ${row.bin || "-"}`;
       return;
     }
-    if(bin && sku){ // RFID tidak ada di stok -> tetap potong lewat Bin + SKU
-      const c = pool(bin, sku);
+    if(bin && sku){ // RFID tidak ada di stok -> tetap potong lewat Bin + SKU (hanya unit yang tidak tersimpan RFID)
+      const c = pool(bin, sku).filter(r => !r.uid);
       if(c.length){ used.add(c[0].id); x.rows = [c[0]]; x.ket = "RFID tidak ada di stok; dipotong via Bin + SKU"; return; }
     }
     x.alasan = "RFID tidak ada di stok" + (bin && sku ? ` & Bin ${bin} tidak berisi SKU ${it.sku}` + besarHint(bin, sku) : "");
@@ -9207,8 +9219,13 @@ function planOutboundBulk_(items, stockRows, codeOf){
     const it = x.it; if(it.rfid) return;
     const bin = normBin(it.bin), sku = normSku(it.sku), qty = Math.max(1, parseInt(it.qty) || 1);
     if(!bin || !sku){ x.alasan = "BIN dan SKU wajib diisi bila RFID kosong"; return; }
-    const c = pool(bin, sku);
-    if(c.length < qty){ x.alasan = `Stok SKU ${it.sku} di Bin ${bin} hanya ${c.length}, diminta ${qty}` + besarHint(bin, sku); return; }
+    const all = pool(bin, sku), c = all.filter(r => !r.uid);
+    if(c.length < qty){
+      x.alasan = (all.length >= qty && c.length < qty)
+        ? `SKU ${it.sku} di Bin ${bin} tersimpan dengan RFID: wajib isi kolom RFID (SKU saja tidak bisa di-OUT)`
+        : `Stok SKU ${it.sku} di Bin ${bin} hanya ${c.length}, diminta ${qty}` + besarHint(bin, sku);
+      return;
+    }
     x.rows = c.slice(0, qty); x.rows.forEach(r => used.add(r.id));
     x.ket = "Dipotong via Bin + SKU";
   });
@@ -9440,7 +9457,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   const ROLE_TABS = {
     admin: null,
     operator: ["scan","outbound","cyclecount","opname","transferbin","transfergudang","search","movement","poinbound","historycctf","discrepancy","pendingan","qrcode"],
-    outbound: ["bincl","search"], // Tim Outbound: input Data Bin Reject (tanpa tombol Kembalikan) + Pencarian Barang
+    outbound: ["outbound","bincl","search"], // Tim Outbound: Outbound (wajib RFID bila stok di lokasi ber-RFID) + Data Bin Reject (tanpa tombol Kembalikan) + Pencarian Barang
     dashboard: ["dashboardreport"],
     search: ["search"]
   };
