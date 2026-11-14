@@ -5711,15 +5711,64 @@ async function loadBinReject(){
 }
 
 function uidCell_(g){
-  const can = isAdminNow_() && g.from !== '-';
+  const can = isAdminNow_();
   const chips = (g.units || []).map(u =>
     '<span class="op-uid" style="margin:2px 4px 2px 0;">' + (u.uid ? escUid_(u.uid) : '(tanpa RFID)') +
-    (can ? ' <button class="btn btn-ghost btn-sm" style="padding:0 6px; margin-left:4px;" data-rj-restore-uid="' + escUid_(u.id) + '" title="Kembalikan HANYA ' + (u.uid ? escUid_(u.uid) : 'unit ini') + ' ke Bin ' + escUid_(g.from) + '">↩</button>' : '') +
+    (can ? ' <button class="btn btn-ghost btn-sm" style="padding:0 6px; margin-left:4px;" data-rj-restore-uid="' + escUid_(u.id) + '" title="Proses ulang HANYA ' + (u.uid ? escUid_(u.uid) : 'unit ini') + (g.from !== '-' ? ' ke Bin ' + escUid_(g.from) : ' (pilih bin tujuan)') + '">↩</button>' : '') +
     '</span>').join('');
   return '<div style="max-height:84px; overflow:auto;">' + (chips || '<span class="hint">-</span>') + '</div>';
 }
-async function restoreRejectRow_(row){
-  const to = row.rejectFrom, fromBin = row.bin;
+/* Bin tujuan saat barang reject diproses ulang.
+   Reject hasil scan -> otomatis ke Bin Asal. Reject dari Inbound (Bin Asal "-") -> Admin isi bin tujuan. */
+async function rjAskTargetBin_(from, label){
+  if(from && from !== '-') return from;
+  // kumpulkan bin penyimpanan yang sudah ada (bukan RJ-, bukan OUT) beserta jumlah unitnya
+  const counts = new Map();
+  try {
+    (await idbGetAllScans()).forEach(r => {
+      if(!r || r.type === 'OUT' || isRejectRow_(r)) return;
+      const bn = String(r.bin || "").trim().toUpperCase();
+      if(!bn || bn === '-') return;
+      counts.set(bn, (counts.get(bn) || 0) + 1);
+    });
+  } catch(e){ console.error(e); }
+  const bins = [...counts.keys()].sort();
+  return new Promise(resolve => {
+    const ov = document.createElement("div");
+    ov.className = "modal-overlay";
+    ov.innerHTML =
+      '<div class="modal-content" style="max-width:440px;">' +
+        '<div class="modal-header"><h3>Pilih Bin Tujuan</h3><button type="button" class="btn-close" data-x>&times;</button></div>' +
+        '<div class="modal-body">' +
+          '<div class="hint" style="margin-bottom:10px;">Barang ini masuk lewat Inbound (tidak punya Bin Asal). Pilih atau ketik bin penyimpanan untuk <b>' + escUid_(label) + '</b> agar bisa diproses kembali.</div>' +
+          '<input type="text" class="input-sm" id="rjTargetBinInput" list="rjTargetBinList" placeholder="Ketik / pilih bin, mis. F-1-00005" autocomplete="off" style="width:100%; box-sizing:border-box; font-weight:bold;">' +
+          '<datalist id="rjTargetBinList">' + bins.map(bn => '<option value="' + escUid_(bn) + '">' + counts.get(bn) + ' unit</option>').join("") + '</datalist>' +
+          '<div class="hint" id="rjTargetBinErr" style="color:var(--danger); min-height:16px; margin-top:6px;"></div>' +
+          '<div style="display:flex; gap:8px; justify-content:flex-end; margin-top:10px;">' +
+            '<button type="button" class="btn btn-ghost btn-sm" data-x>Batal</button>' +
+            '<button type="button" class="btn btn-sm" id="rjTargetBinOk">Lanjut</button>' +
+          '</div>' +
+        '</div></div>';
+    document.body.appendChild(ov);
+    requestAnimationFrame(() => ov.classList.add("show"));
+    const inp = ov.querySelector("#rjTargetBinInput"), err = ov.querySelector("#rjTargetBinErr");
+    const close = val => { ov.classList.remove("show"); setTimeout(() => ov.remove(), 200); resolve(val); };
+    const submit = () => {
+      const v = String(inp.value || "").trim().toUpperCase().replace(/[<>"'`\\]/g, "");
+      if(!v){ err.textContent = "Bin tujuan wajib diisi."; inp.focus(); return; }
+      if(/^RJ/.test(v)){ err.textContent = "Tidak boleh bin reject (RJ-). Isi bin penyimpanan biasa."; inp.focus(); return; }
+      if(!counts.has(v) && !confirm("Bin " + v + " belum pernah dipakai. Tetap gunakan bin ini?")) return;
+      close(v);
+    };
+    ov.querySelector("#rjTargetBinOk").onclick = submit;
+    ov.querySelectorAll("[data-x]").forEach(el => el.onclick = () => close(null));
+    ov.addEventListener("mousedown", e => { if(e.target === ov) close(null); });
+    inp.addEventListener("keydown", e => { if(e.key === "Enter"){ e.preventDefault(); submit(); } else if(e.key === "Escape") close(null); });
+    inp.focus();
+  });
+}
+async function restoreRejectToBin_(row, to){
+  const fromBin = row.bin;
   REJECT_FIELDS_.forEach(k => { delete row[k]; });
   row.bin = to;
   await putScanRow_(row);
@@ -5748,7 +5797,7 @@ function renderRejectTable_(){
     '<tr><td style="color:var(--danger); font-weight:bold;">' + escUid_(g.bin) + '</td><td>' + escUid_(g.from) + '</td><td class="sku">' + escUid_(g.sku) +
     '</td><td>' + escUid_(g.nama) + '</td><td>' + uidCell_(g) + '</td><td style="text-align:center; font-weight:bold;">' + g.qty + '</td><td>' + escUid_(g.reason) +
     '</td><td>' + (g.last ? new Date(g.last).toLocaleString("id-ID") : '-') + '</td><td>' + (g.by ? escUid_(g.by) : '<span class="hint">-</span>') +
-    '</td><td style="text-align:center;">' + ((g.from !== '-' && isAdminNow_()) ? '<button class="btn btn-ghost btn-sm" data-rj-restore="' + i + '" title="Kembalikan SEMUA unit di baris ini ke bin asal (khusus Admin)">' + (g.qty > 1 ? '↩ Semua' : '↩ Kembalikan') + '</button>' : '<span class="hint">-</span>') + '</td></tr>').join("") +
+    '</td><td style="text-align:center;">' + (isAdminNow_() ? '<button class="btn btn-ghost btn-sm" data-rj-restore="' + i + '" title="Proses ulang SEMUA unit di baris ini (khusus Admin)">' + (g.qty > 1 ? '↩ Semua' : '↩ Kembalikan') + '</button>' : '<span class="hint">-</span>') + '</td></tr>').join("") +
     (list.length > LIMIT ? '<tr><td colspan="10" class="hint" style="text-align:center;">Menampilkan ' + LIMIT + ' dari ' + list.length + ' baris. Gunakan pencarian atau Export CSV.</td></tr>' : "");
 }
 
@@ -5761,12 +5810,13 @@ document.getElementById("rjBody").addEventListener("click", async (e) => {
     try {
       const row = (await idbGetAllScans()).find(r => r && r.id === id && r.type !== 'OUT' && isRejectRow_(r));
       if(!row){ toast("Unit tidak ditemukan di Data Bin Reject.", "warning"); }
-      else if(!row.rejectFrom || row.rejectFrom === '-'){ toast("Bin asal unit ini tidak diketahui, tidak bisa dikembalikan otomatis.", "bad"); }
-      else if(confirm("Kembalikan HANYA " + (row.uid ? "RFID " + row.uid : "unit ini") + " (SKU " + row.sku + ") dari " + row.bin + " ke Bin Asal " + row.rejectFrom + "?\n\nUnit lain di baris yang sama tetap di Reject.")){
-        const to = row.rejectFrom;
-        await restoreRejectRow_(row);
-        invalidateUidIndex();
-        toast("✓ " + (row.uid || row.sku) + " dikembalikan ke Bin " + to + ".", "good");
+      else {
+        const to = await rjAskTargetBin_(row.rejectFrom, (row.uid ? "RFID " + row.uid : "unit ini"));
+        if(to && confirm("Kembalikan HANYA " + (row.uid ? "RFID " + row.uid : "unit ini") + " (SKU " + row.sku + ") dari " + row.bin + " ke Bin " + to + "?\n\nUnit lain di baris yang sama tetap di Reject.")){
+          await restoreRejectToBin_(row, to);
+          invalidateUidIndex();
+          toast("✓ " + (row.uid || row.sku) + " dikembalikan ke Bin " + to + ".", "good");
+        }
       }
     } catch(err){ console.error(err); toast("Gagal mengembalikan dari reject.", "bad"); }
     await loadBinReject();
@@ -5777,14 +5827,16 @@ document.getElementById("rjBody").addEventListener("click", async (e) => {
   if(!isAdminNow_()){ toast("Hanya Admin yang bisa mengembalikan barang dari Reject.", "bad"); return; }
   const g = filteredReject_()[Number(btn.dataset.rjRestore)];
   if(!g) return;
-  if(!confirm("Kembalikan " + g.qty + " unit SKU " + g.sku + " dari " + g.bin + " ke Bin Asal " + g.from + "?")) return;
+  const toAll = await rjAskTargetBin_(g.from, g.qty + " unit SKU " + g.sku);
+  if(!toAll) return;
+  if(!confirm("Kembalikan " + g.qty + " unit SKU " + g.sku + " dari " + g.bin + " ke Bin " + toAll + "?")) return;
   btn.disabled = true;
   try {
     const rows = await idbGetAllScans();
     const units = rows.filter(r => r && r.type !== 'OUT' && (r.bin || '-') === g.bin && (r.sku || '-') === g.sku && (r.rejectFrom || '-') === g.from && (r.rejectReason || '-') === g.reason);
     let n = 0;
     for(const row of units){
-      const to = row.rejectFrom;
+      const to = toAll;
       const fromBin = row.bin;
       REJECT_FIELDS_.forEach(k => { delete row[k]; });
       row.bin = to;
@@ -5793,7 +5845,7 @@ document.getElementById("rjBody").addEventListener("click", async (e) => {
       n++;
     }
     invalidateUidIndex();
-    toast("✓ " + n + " unit " + g.sku + " dikembalikan ke Bin " + g.from + ".", "good");
+    toast("✓ " + n + " unit " + g.sku + " dikembalikan ke Bin " + toAll + ".", "good");
   } catch(err){ console.error(err); toast("Gagal mengembalikan dari reject.", "bad"); }
   await loadBinReject();
 });
