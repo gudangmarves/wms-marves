@@ -2896,6 +2896,16 @@ async function resolveScanValue(raw, focusEl){
       if(RFID_MAP[cand] || await idbGetRfid(cand)) code = cand;
       else if(/^[0-9A-F]{16,}$/.test(cand) && !(await idbGetMaster(String(raw).trim()))) code = cand;
     }
+    // Cadangan: kode cocok dengan UID di stok aktif (mis. mapping RFID belum ada di perangkat ini) -> anggap RFID, SKU diambil dari baris stoknya.
+    if(!code && cand){
+      try{
+        const hit = await findStockRowByUidFast_(cand);
+        if(hit && hit.sku){
+          RFID_MAP[cand] = { sku: hit.sku, nama: hit.nama || '' };
+          return { sku: hit.sku, uid: cand };
+        }
+      }catch(e){ console.warn("Fallback UID stok gagal:", e); }
+    }
   }
   if(!code) return { sku: raw, uid: null };
 
