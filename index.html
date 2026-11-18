@@ -666,6 +666,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
           <button class="nav-item" id="navOpname">📋 Stock Opname Harian</button>
           <button class="nav-item" id="navTransferBin">🔀 Transfer Bin</button>
           <button class="nav-item" id="navTransferGudang">📦 Transfer Gudang</button>
+          <button class="nav-item" id="navPinjam">🎪 Peminjaman / Bazar</button>
         </div>
       </div>
       
@@ -1566,6 +1567,35 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
               <tbody id="pdBody"><tr><td class="hint" style="text-align:center; padding:24px;">Upload file pesanan (kolom: Channel - Nama Toko, SKU Master, Jumlah, Dikirim Sebelum).</td></tr></tbody>
             </table>
           </div>
+        </div>
+      </section>
+
+      <!-- ============================ TAB: PEMINJAMAN / BAZAR ======================== -->
+      <section id="tab-pinjam" class="hidden" style="height: 100%;">
+        <div class="card" style="display:flex; flex-direction:column; height:100%; padding:16px 20px; margin-bottom:0;">
+          <h3 class="card-header" style="margin-bottom:8px;">🎪 Peminjaman / Bazar</h3>
+          <div class="toolbar-row" style="margin-bottom:8px; flex-wrap:wrap; gap:8px;">
+            <div class="ma-chips" role="group"><button class="ma-chip on" id="pjModeOut">📤 Keluar (Pinjam / Bazar)</button><button class="ma-chip" id="pjModeIn">📥 Kembali ke Gudang</button></div>
+          </div>
+          <div class="toolbar-row" style="margin-bottom:8px; flex-wrap:wrap; gap:8px;" id="pjFormOut">
+            <select id="pjType" class="input-sm"><option value="PINJAM">Peminjaman (marketing/lainnya)</option><option value="BAZAR">Bazar / Event</option></select>
+            <input type="text" id="pjWho" class="input-sm" placeholder="Nama peminjam / nama bazar *" style="min-width:210px;">
+            <label class="hint" style="margin:0;">Est. kembali <input type="date" id="pjEst" class="input-sm"></label>
+            <input type="text" id="pjNote" class="input-sm" placeholder="Catatan (opsional)" style="min-width:180px;">
+            <input type="text" id="pjBin" class="input-sm" placeholder="Bin asal (hanya bila scan SKU)" style="min-width:170px; text-transform:uppercase;">
+          </div>
+          <div class="toolbar-row" style="margin-bottom:8px; gap:8px;">
+            <input type="text" id="pjScan" class="input" placeholder="Scan RFID / barcode lalu Enter..." autocomplete="off" style="flex:1; font-family:var(--font-mono);">
+            <input type="text" id="pjSearch" class="input-sm toolbar-search" placeholder="🔍 Cari peminjam / SKU / RFID...">
+            <div class="ma-chips" role="group"><button class="ma-chip on" data-pjc="all">Semua</button><button class="ma-chip" data-pjc="PINJAM">Pinjam</button><button class="ma-chip" data-pjc="BAZAR">Bazar</button></div>
+            <span class="toolbar-count" id="pjInfo"></span>
+            <button class="btn btn-ghost btn-sm" id="pjExport">⬇️ Export</button>
+          </div>
+          <div class="hint" style="margin-bottom:8px;">Unit yang dipinjam/dibawa bazar <b>keluar dari stok gudang</b> (tidak lagi dihitung "hilang" di Stock Opname / Cycle Count) dan tercatat di Tracking Movement. Saat barang kembali, scan di mode <b>Kembali</b> atau klik tombol Kembalikan; unit masuk lagi ke bin asal.</div>
+          <div class="scroll-table fill"><table>
+            <thead><tr><th>Tgl Keluar</th><th class="c">Tipe</th><th>Peminjam / Bazar</th><th>SKU / Nama</th><th>RFID</th><th class="c">Bin Asal</th><th class="c">Est. Kembali</th><th>Catatan</th><th class="c">Aksi</th></tr></thead>
+            <tbody id="pjBody"><tr><td colspan="9" class="hint" style="text-align:center; padding:24px;">Memuat...</td></tr></tbody>
+          </table></div>
         </div>
       </section>
 
@@ -3343,6 +3373,7 @@ const tabNames = [
   { id: "discrepancy", nav: "navDiscrepancy", tab: "tab-discrepancy" },
   { id: "movementanalysis", nav: "navMovementAnalysis", tab: "tab-movementanalysis" },
   { id: "pendingan", nav: "navPendingan", tab: "tab-pendingan" },
+  { id: "pinjam", nav: "navPinjam", tab: "tab-pinjam" },
   { id: "dashboardreport", nav: "navDashboardReport", tab: "tab-dashboardreport" },
   { id: "master", nav: "navMaster", tab: "tab-master" },
   { id: "rfidmap", nav: "navRfidMap", tab: "tab-rfidmap" },
@@ -3412,6 +3443,7 @@ function switchTab(activeId) {
   if(activeId === "discrepancy") loadDiscrepancy();
   if(activeId === "movementanalysis") loadMovementAnalysis();
   if(activeId === "pendingan" && typeof renderPendingan === "function") renderPendingan();
+  if(activeId === "pinjam" && window.pinjamRefresh_) { window.pinjamRefresh_(); const _ps = document.getElementById("pjScan"); if (_ps) _ps.focus(); }
   if(activeId === "dashboardreport") loadDashboardReport();
 }
 
@@ -4143,7 +4175,7 @@ async function executeDeduction(sku, bin, typeStr, remark, isSession = false, ui
 
 async function executeDeductionCore(sku, bin, typeStr, remark, isSession = false, uid = null) {
     const skuNorm = String(sku).trim().toUpperCase();
-    const isOutLike = (typeStr === 'OUTBOUND' || typeStr === 'SALES');
+    const isOutLike = (typeStr === 'OUTBOUND' || typeStr === 'SALES' || typeStr === 'PINJAM' || typeStr === 'BAZAR');
     let target = null, blockedBesar = null, blockedReject = null, blockedRfid = null;
     if (uid) {
         // RFID: cari unit persis dengan UID itu lewat indeks UID + baca ulang barisnya (tanpa memuat 44 ribu baris tiap scan)
@@ -4153,7 +4185,7 @@ async function executeDeductionCore(sku, bin, typeStr, remark, isSession = false
     } else {
         const allScans = (await idbGetAllScans()).filter(r => r !== null && r !== undefined);
         const inBin = allScans.filter(r => r.sku && r.sku.trim().toUpperCase() === skuNorm && (r.bin || '-') === bin && r.type !== 'OUT');
-        if (typeStr === 'OUTBOUND') {
+        if (typeStr === 'OUTBOUND' || typeStr === 'PINJAM' || typeStr === 'BAZAR') {
             // Aturan RFID: SKU saja hanya boleh di-OUT bila unit di lokasi itu memang TIDAK tersimpan RFID.
             const elig = inBin.filter(r => !isBesar_(r) && !isRejectRow_(r));
             target = elig.find(r => !r.uid) || null;
@@ -8389,8 +8421,8 @@ document.getElementById("fileUploadScan").addEventListener("change", async (e) =
    ============================================================ */
 let moveRenderLimit = 200;
 
-const MOVE_TYPES_ = ['INBOUND', 'OUTBOUND', 'SALES', 'RETUR', 'DELETE', 'REJECT', 'REJECT_RESTORE', 'UNDO_OUTBOUND'];
-const MOVE_TYPE_LABEL_ = { INBOUND:'INBOUND', OUTBOUND:'OUTBOUND', SALES:'SALES', RETUR:'RETUR', DELETE:'DELETE', REJECT:'REJECT', REJECT_RESTORE:'BATAL REJECT', UNDO_OUTBOUND:'BATAL OUTBOUND' };
+const MOVE_TYPES_ = ['INBOUND', 'OUTBOUND', 'SALES', 'RETUR', 'DELETE', 'REJECT', 'REJECT_RESTORE', 'UNDO_OUTBOUND', 'PINJAM', 'BAZAR', 'KEMBALI_PINJAM'];
+const MOVE_TYPE_LABEL_ = { PINJAM:'PINJAM', BAZAR:'BAZAR', KEMBALI_PINJAM:'KEMBALI PINJAM/BAZAR', INBOUND:'INBOUND', OUTBOUND:'OUTBOUND', SALES:'SALES', RETUR:'RETUR', DELETE:'DELETE', REJECT:'REJECT', REJECT_RESTORE:'BATAL REJECT', UNDO_OUTBOUND:'BATAL OUTBOUND' };
 
 /* Filter Tracking Movement (dipakai tabel DAN Export, supaya hasil Export selalu sama dengan yang tampil).
    Pencarian bebas: mencari di SEMUA kolom (waktu, tipe, bin, SKU, RFID, keterangan, nama, dokumen, oleh, status dikembalikan/dihapus).
@@ -8469,6 +8501,9 @@ async function loadMovements(filterSku = "", startDate = "", endDate = "") {
         else if(r.type === 'OUTBOUND') typeBadge = `<span class="badge out">OUTBOUND</span>`;
         else if(r.type === 'SALES') typeBadge = `<span class="badge warning">SALES</span>`;
         else if(r.type === 'RETUR') typeBadge = `<span class="badge warning">RETUR</span>`;
+        else if(r.type === 'PINJAM') typeBadge = `<span class="badge warning">PINJAM</span>`;
+        else if(r.type === 'BAZAR') typeBadge = `<span class="badge transfer">BAZAR</span>`;
+        else if(r.type === 'KEMBALI_PINJAM') typeBadge = `<span class="badge good">KEMBALI</span>`;
         else if(r.type === 'DELETE') typeBadge = `<span class="badge bad">DELETE</span>`;
         else if(r.type === 'REJECT') typeBadge = `<span class="badge bad">REJECT</span>`;
         else if(r.type === 'REJECT_RESTORE') typeBadge = `<span class="badge good">BATAL REJECT</span>`;
@@ -9667,11 +9702,85 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   rd.readAsText(f);
 });
 
+/* ============ PEMINJAMAN / BAZAR ============
+   Status dihitung dari Tracking Movement (PINJAM/BAZAR = keluar, KEMBALI_PINJAM = kembali), jadi ikut tersinkron ke cloud. */
+(function initPinjam_(){
+  const $ = id => document.getElementById(id);
+  let mode = "out", chip = "all", list = [];
+  const parseRm = rm => { const m = /^\[(PINJAM|BAZAR)\]\s*(.*?)\s*\|\s*Est:\s*([0-9-]*)\s*\|\s*([\s\S]*)$/.exec(rm || ""); return m ? { who: m[2], est: m[3], note: m[4] === "-" ? "" : m[4] } : { who: "", est: "", note: rm || "" }; };
+  const fmtD = iso => { try { return new Date(iso).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" }); } catch (e) { return iso || "-"; } };
+  const today = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
+
+  async function loadOpen() {
+    const mv = (await idbGetAllMovements()).filter(m => m && (m.type === "PINJAM" || m.type === "BAZAR" || m.type === "KEMBALI_PINJAM")).sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+    const open = new Map();
+    mv.forEach(m => { if (m.type === "KEMBALI_PINJAM") open.delete(m.ref_id); else open.set(m.ref_id, Object.assign({}, m, parseRm(m.remark))); });
+    return Array.from(open.values()).sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
+  }
+  function visible() {
+    const q = ($("pjSearch").value || "").trim().toLowerCase();
+    return list.filter(r => (chip === "all" || r.type === chip) && (!q || [r.who, r.sku, r.nama, r.uid, r.bin, r.note].join(" ").toLowerCase().includes(q)));
+  }
+  function render() {
+    const rows = visible(), t = today();
+    $("pjInfo").textContent = rows.length + " unit sedang keluar";
+    $("pjBody").innerHTML = rows.length ? rows.map((r, i) => {
+      const late = r.est && r.est < t;
+      return `<tr><td>${escUid_(fmtD(r.ts))}</td><td class="c"><span class="badge ${r.type === "BAZAR" ? "transfer" : "warning"}">${r.type}</span></td><td style="font-weight:700;">${escUid_(r.who || "-")}</td><td><b style="font-family:var(--font-mono);">${escUid_(r.sku || "")}</b><br><span class="hint">${escUid_(r.nama || "")}</span></td><td style="font-family:var(--font-mono);">${escUid_(r.uid || "-")}</td><td class="c">${escUid_(r.bin || "-")}</td><td class="c">${r.est ? escUid_(r.est) : "-"}${late ? ' <span class="badge bad">lewat</span>' : ""}</td><td>${escUid_(r.note || "")}</td><td class="c"><button class="btn btn-accent btn-sm" data-pjret="${escUid_(r.ref_id)}">↩ Kembalikan</button></td></tr>`;
+    }).join("") : `<tr><td colspan="9" class="hint" style="text-align:center; padding:24px;">Tidak ada barang yang sedang dipinjam / dibawa bazar.</td></tr>`;
+  }
+  async function refresh() { try { list = await loadOpen(); } catch (e) { list = []; console.warn(e); } render(); }
+  window.pinjamRefresh_ = refresh;
+
+  async function giveBack(r) {
+    if (r.uid) {
+      const ex = await findStockRowByUidFast_(r.uid);
+      if (ex) { if (!confirm(`RFID ${r.uid} sudah ada lagi di stok (Bin ${ex.bin || "-"}). Tutup catatan pinjam saja tanpa menambah stok?`)) return false; }
+      else await idbAddScan({ id: r.ref_id, sku: r.sku, uid: r.uid || null, nama: r.nama, found: true, bin: r.bin, ts: new Date().toISOString(), type: "IN", remark: "Kembali dari " + (r.type === "BAZAR" ? "bazar" : "peminjaman") + ": " + r.who, sessionActive: false, wh: WH_RTS });
+    } else {
+      await idbAddScan({ id: r.ref_id, sku: r.sku, uid: null, nama: r.nama, found: true, bin: r.bin, ts: new Date().toISOString(), type: "IN", remark: "Kembali dari " + (r.type === "BAZAR" ? "bazar" : "peminjaman") + ": " + r.who, sessionActive: false, wh: WH_RTS });
+    }
+    await recordMovement(r.ref_id, "KEMBALI_PINJAM", r.sku, r.nama, r.bin, "Kembali dari " + r.type + ": " + r.who, "", r.uid);
+    invalidateUidIndex();
+    toast(`✓ ${r.sku} kembali ke Bin ${r.bin || "-"}`, "good");
+    return true;
+  }
+  async function onScan(raw) {
+    const res = await resolveScanValue(raw, $("pjScan")); if (res === null) return;
+    if (mode === "in") {
+      const U = normUid_(res.uid);
+      const bin = $("pjBin").value.trim().toUpperCase();
+      const r = list.find(x => U ? normUid_(x.uid) === U : (String(x.sku).toUpperCase() === String(res.sku).toUpperCase() && !x.uid && (!bin || x.bin === bin)));
+      if (!r) { toast(U ? `RFID ${res.uid} tidak tercatat sedang dipinjam / bazar` : `SKU ${res.sku} tidak tercatat sedang dipinjam / bazar`, "bad"); return; }
+      if (await giveBack(r)) await refresh();
+      return;
+    }
+    const who = $("pjWho").value.trim();
+    if (!who) { toast("Isi nama peminjam / nama bazar dulu", "bad"); $("pjWho").focus(); return; }
+    const bin = $("pjBin").value.trim().toUpperCase();
+    if (!bin && !res.uid) { toast("Scan SKU tanpa RFID wajib isi Bin asal", "bad"); return; }
+    const tipe = $("pjType").value;
+    const remark = `[${tipe}] ${who} | Est: ${$("pjEst").value || ""} | ${$("pjNote").value.trim() || "-"}`;
+    if (await executeDeduction(res.sku, bin, tipe, remark, false, res.uid)) await refresh();
+  }
+  $("pjScan").addEventListener("keydown", e => { if (e.key !== "Enter") return; const v = $("pjScan").value.trim(); $("pjScan").value = ""; if (v) onScan(v); });
+  $("pjSearch").addEventListener("input", render);
+  document.querySelectorAll("[data-pjc]").forEach(b => b.onclick = () => { chip = b.dataset.pjc; document.querySelectorAll("[data-pjc]").forEach(x => x.classList.toggle("on", x === b)); render(); });
+  const setMode = m => { mode = m; $("pjModeOut").classList.toggle("on", m === "out"); $("pjModeIn").classList.toggle("on", m === "in"); ["pjType", "pjWho", "pjEst", "pjNote"].forEach(id => { const el = $(id); (el.closest("label") || el).style.display = m === "out" ? "" : "none"; }); $("pjBin").placeholder = m === "out" ? "Bin asal (hanya bila scan SKU)" : "Bin (hanya bila scan SKU)"; $("pjScan").focus(); };
+  $("pjModeOut").onclick = () => setMode("out"); $("pjModeIn").onclick = () => setMode("in");
+  $("pjBody").addEventListener("click", async e => { const b = e.target.closest("[data-pjret]"); if (!b) return; const r = list.find(x => x.ref_id === b.dataset.pjret); if (r && confirm(`Kembalikan ${r.sku}${r.uid ? " (" + r.uid + ")" : ""} dari ${r.who} ke Bin ${r.bin || "-"}?`) && await giveBack(r)) await refresh(); });
+  $("pjExport").onclick = () => { const rows = visible(); if (!rows.length) { toast("Tidak ada data untuk di-export", "bad"); return; }
+    const ws = XLSX.utils.json_to_sheet(rows.map(r => ({ "Tgl Keluar": fmtD(r.ts), "Tipe": r.type, "Peminjam/Bazar": r.who, "SKU": r.sku, "Nama Barang": r.nama, "RFID": r.uid || "", "Bin Asal": r.bin, "Est. Kembali": r.est, "Catatan": r.note, "Dicatat Oleh": r.by || "" })));
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Pinjam-Bazar"); XLSX.writeFile(wb, "Peminjaman_Bazar_" + today() + ".xlsx"); };
+  $("navPinjam").onclick = () => switchTab("pinjam");
+  setMode("out");
+})();
+
 /* ============ LOGIN & PERAN (Admin / Operator / Dashboard / Pencarian) ============ */
 (function initRoleLogin(){
   const ROLE_TABS = {
     admin: null,
-    operator: ["scan","outbound","cyclecount","opname","transferbin","transfergudang","search","movement","poinbound","historycctf","discrepancy","pendingan","qrcode"],
+    operator: ["scan","outbound","cyclecount","opname","transferbin","transfergudang","search","movement","poinbound","historycctf","discrepancy","pendingan","pinjam","qrcode"],
     outbound: ["outbound","bincl","search"], // Tim Outbound: Outbound (wajib RFID bila stok di lokasi ber-RFID) + Data Bin Reject (tanpa tombol Kembalikan) + Pencarian Barang
     dashboard: ["dashboardreport"],
     search: ["search"]
