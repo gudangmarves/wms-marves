@@ -1076,6 +1076,16 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
             </div>
 
             <label class="hint" style="margin:0 0 6px; display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" id="opOnlyDiff"> Tampilkan hanya yang selisih (lengkap dengan daftar UID/RFID)</label>
+            <details id="opBinSummaryBox" style="margin:0 0 8px; border:1px solid rgba(128,128,128,.3); border-radius:8px; padding:6px 10px;">
+              <summary style="cursor:pointer; font-weight:700;">📦 Ringkasan per Bin: isi bin sebelum vs sesudah SO</summary>
+              <div style="display:flex; gap:8px; align-items:center; margin:8px 0; flex-wrap:wrap;">
+                <select id="opBinSumDate" class="input"></select>
+                <input type="text" id="opBinSumFilter" class="input" placeholder="Filter bin (mis. C-3-00005)" style="min-width:200px; text-transform:uppercase;">
+                <span class="hint" id="opBinSumInfo"></span>
+              </div>
+              <div id="opBinSummary" style="max-height:320px; overflow:auto;"></div>
+              <div class="hint" style="margin-top:6px;">Hanya SKU yang dihitung (di-scan) pada SO tanggal tersebut yang masuk ringkasan. SKU lain di bin yang sama tidak disentuh.</div>
+            </details>
             <div class="scroll-table fill">
               <table class="op-table">
                 <thead><tr>
@@ -6743,10 +6753,53 @@ async function opUpsertTarget(sku, nama, source) {
 // Pencocokan per unit: UID di stok sistem (Gudang RTS) vs UID yang di-scan hari ini untuk SKU yang sama.
 //  - missing: ada di sistem, belum/tidak ter-scan (hilang)
 //  - extra  : ter-scan, tidak tercatat di sistem untuk SKU ini (lebih)
-function opUidDiff(sku) {
+function opNormBin_(b) { return String(b || '').trim().toUpperCase(); }
+// Data SEBELUM vs SESUDAH Stock Opname untuk satu SKU di satu bin.
+// beforeRows: baris stok sistem (sebelum SO) di bin itu; scanRows: hasil scan fisik di bin itu.
+function opMakeBinDetail_(bin, beforeRows, scanRows) {
+  const scanUids = new Set(scanRows.filter(x => x.uid).map(x => normUid_(x.uid)));
+  const beforeUids = new Set(beforeRows.filter(x => x.uid).map(x => normUid_(x.uid)));
+  const before = beforeRows.length, after = scanRows.length;
+  return {
+    bin, before, after, selisih: after - before,
+    missing: beforeRows.filter(x => x.uid && !scanUids.has(normUid_(x.uid))).map(x => x.uid),
+    extra: scanRows.filter(x => x.uid && !beforeUids.has(normUid_(x.uid))).map(x => x.uid)
+  };
+}
+// Pratinjau sebelum disimpan: stok lokal (opStockRows) vs scan hari ini, per bin yang di-scan.
+function opBinBeforeAfterLive(sku) {
+  const key = opKey_(sku), scans = opScansForSku(sku);
+  const bins = Array.from(new Set(scans.map(x => opNormBin_(x.bin)))).sort();
+  return bins.map(b => opMakeBinDetail_(b,
+    opStockRows.filter(r => opKey_(r.sku) === key && opNormBin_(r.bin) === b),
+    scans.filter(x => opNormBin_(x.bin) === b)));
+}
+function opBinDetailText_(list) {
+  return (list || []).map(d => `${d.bin}: ${d.before} → ${d.after} (${d.selisih > 0 ? '+' : ''}${d.selisih})`).join('; ');
+}
+function opBinDetailHtml_(list, pending) {
+  const fm = n => (n > 0 ? '+' + n : String(n));
+  const rows = list.map(d => {
+    const c = d.selisih === 0 ? 'var(--success)' : (d.selisih > 0 ? 'var(--warning)' : 'var(--danger)');
+    return `<tr><td style="font-family:var(--font-mono);">${escUid_(d.bin)}</td><td class="c">${d.before}</td><td class="c">${d.after}</td><td class="c" style="font-weight:700; color:${c};">${fm(d.selisih)}</td></tr>`;
+  }).join('');
+  const tb = list.reduce((a, d) => a + d.before, 0), ta = list.reduce((a, d) => a + d.after, 0);
+  return `<div style="font-weight:700; margin-bottom:4px;">📊 Per Bin: sebelum vs sesudah SO ${pending ? '<span class="badge warning">belum disimpan</span>' : ''}</div>
+    <table style="font-size:12px; border-collapse:collapse; min-width:320px;">
+      <thead><tr><th style="text-align:left; padding:2px 10px 2px 0;">Bin</th><th class="c" style="padding:2px 10px;">Sebelum SO</th><th class="c" style="padding:2px 10px;">Sesudah SO</th><th class="c" style="padding:2px 10px;">Selisih</th></tr></thead>
+      <tbody>${rows}</tbody>
+      ${list.length > 1 ? `<tfoot><tr style="font-weight:700;"><td>Total</td><td class="c">${tb}</td><td class="c">${ta}</td><td class="c">${fm(ta - tb)}</td></tr></tfoot>` : ''}
+    </table>`;
+}
+function opUidDiff(sku, scopeToScannedBins) {
   const key = opKey_(sku);
   const sys = new Map();
-  opStockRows.forEach(r => { if (r.uid && opKey_(r.sku) === key) sys.set(normUid_(r.uid), r); });
+  const scanBins = new Set(opScansForSku(sku).map(x => opNormBin_(x.bin)));
+  opStockRows.forEach(r => {
+    if (!(r.uid && opKey_(r.sku) === key)) return;
+    if (scopeToScannedBins && !scanBins.has(opNormBin_(r.bin))) return; // unit di bin lain tidak dianggap hilang
+    sys.set(normUid_(r.uid), r);
+  });
   const scanned = new Map();
   opScansForSku(sku).forEach(x => { if (x.uid) scanned.set(normUid_(x.uid), x); });
   const missing = [], extra = [];
@@ -6889,9 +6942,10 @@ window.opSaveCount = async function (sku) {
   const target = opTargets.find(t => t.sku === sku);
   const nama = (target && target.nama) || opGetOHNama(sku) || (opStockMap[opKey_(sku)] && opStockMap[opKey_(sku)].nama) || 'N/A';
   const today = opTodayStr();
-  const oldPhysicalQty = (opStockMap[opKey_(sku)] && opStockMap[opKey_(sku)].qty) || 0;
   const scansForSku = opScansForSku(sku);
-  const uidDiff = opUidDiff(sku); // dihitung SEBELUM stok sistem diganti dengan hasil scan
+  // PATCH: penghapusan stok HANYA untuk bin yang benar-benar di-scan hari ini. Unit SKU yang sama di bin lain tidak disentuh.
+  const scannedBinSet = new Set(scansForSku.map(x => opNormBin_(x.bin)));
+  const uidDiff = opUidDiff(sku, true); // dihitung SEBELUM stok sistem diganti dengan hasil scan
 
   try {
       const allScans = await idbGetAllScans();
@@ -6901,7 +6955,25 @@ window.opSaveCount = async function (sku) {
       const scannedUids = new Set(scansForSku.filter(x => x.uid).map(x => normUid_(x.uid)));
       const besarConflict = allScans.find(r => r && r.type !== 'OUT' && r.uid && scannedUids.has(normUid_(r.uid)) && isBesar_(r));
       if (besarConflict) { toast(`RFID ${besarConflict.uid} ada di Gudang Besar. Opname Harian hanya untuk Gudang RTS; gunakan Transfer Gudang.`, "bad"); return; }
-      const oldRows = allScans.filter(r => r && r.type !== 'OUT' && !isBesar_(r) && !isRejectRow_(r) && (opKey_(r.sku) === skuKey || (r.uid && scannedUids.has(normUid_(r.uid)))));
+      const oldRows = allScans.filter(r => r && r.type !== 'OUT' && !isBesar_(r) && !isRejectRow_(r) &&
+          ((opKey_(r.sku) === skuKey && scannedBinSet.has(opNormBin_(r.bin))) || (r.uid && scannedUids.has(normUid_(r.uid)))));
+      const otherBinUnits = allScans.filter(r => r && r.type !== 'OUT' && !isBesar_(r) && !isRejectRow_(r) && opKey_(r.sku) === skuKey && !scannedBinSet.has(opNormBin_(r.bin)) && !(r.uid && scannedUids.has(normUid_(r.uid)))).length;
+      const toDelete = oldRows.filter(r => r.uid && !scannedUids.has(normUid_(r.uid))).length;
+      // Snapshot SEBELUM vs SESUDAH per bin (diambil sebelum stok diganti hasil scan)
+      const binDetail = Array.from(scannedBinSet).sort().map(b => opMakeBinDetail_(b,
+          allScans.filter(r => r && r.type !== 'OUT' && !isBesar_(r) && !isRejectRow_(r) && opKey_(r.sku) === skuKey && opNormBin_(r.bin) === b),
+          scansForSku.filter(x => opNormBin_(x.bin) === b)));
+      const qtySebelum = binDetail.reduce((a, d) => a + d.before, 0);
+      const qtySesudah = binDetail.reduce((a, d) => a + d.after, 0);
+      if (toDelete > 0 || otherBinUnits > 0) {
+          const msg = `Simpan hasil hitung ${sku}?\n\n` +
+              `• Sebelum → Sesudah SO per bin:\n   ${opBinDetailText_(binDetail).split('; ').join('\n   ') || '-'}\n` +
+              `• Unit ter-scan: ${qtyFisik}\n` +
+              `• Unit di bin yang sama tapi TIDAK ter-scan (akan DIHAPUS dari stok): ${toDelete}\n` +
+              `• Unit SKU ini di bin LAIN (tidak disentuh): ${otherBinUnits}\n\nLanjutkan?`;
+          if (!confirm(msg)) return;
+      }
+      const oldPhysicalQty = allScans.filter(r => r && r.type !== 'OUT' && !isBesar_(r) && !isRejectRow_(r) && opKey_(r.sku) === skuKey && scannedBinSet.has(opNormBin_(r.bin))).length;
       const pool = oldRows.slice()
           .sort((a, b) => String(a.ts || '').localeCompare(String(b.ts || '')))
           .map(r => ({ ts: r.ts, rel: !(r.remark === "Cycle Count Result" && !r.tsKept), used: false }));
@@ -6935,13 +7007,13 @@ window.opSaveCount = async function (sku) {
           }
       }
 
-      opStockRows = opStockRows.filter(r => !(opKey_(r.sku) === skuKey || (r.uid && scannedUids.has(normUid_(r.uid)))));
+      opStockRows = opStockRows.filter(r => !((opKey_(r.sku) === skuKey && scannedBinSet.has(opNormBin_(r.bin))) || (r.uid && scannedUids.has(normUid_(r.uid)))));
       scansForSku.forEach(x => opStockRows.push({ sku, uid: x.uid || null, bin: x.bin }));
 
-      const resultEntry = { id: `res_${today}_${sku}`, kind: 'result', date: today, sku, nama, qtySystem, qtyFisik, selisih, bin: binDisplay || '-', missingUids: uidDiff.missing, extraUids: uidDiff.extra, ts: new Date().toISOString() };
+      const resultEntry = { id: `res_${today}_${sku}`, kind: 'result', date: today, sku, nama, qtySystem, qtyFisik, selisih, bin: binDisplay || '-', binDetail, qtySebelum, qtySesudah, missingUids: uidDiff.missing, extraUids: uidDiff.extra, ts: new Date().toISOString() };
       await idbPutOpname(resultEntry);
 
-      opStockMap[opKey_(sku)] = { qty: qtyFisik, nama, sku };
+      opStockMap[opKey_(sku)] = { qty: qtyFisik + otherBinUnits, nama, sku };
       opResults = opResults.filter(r => r.sku !== sku);
       opResults.push(resultEntry);
       opAllOpname = opAllOpname.filter(o => o.id !== resultEntry.id);
@@ -7016,7 +7088,50 @@ window.opToggleEvidence = function (sku, btnEl) {
   trEv.classList.toggle("hidden");
 };
 
+// Kumpulkan isi bin sebelum vs sesudah SO: Map bin -> { rows:[{sku,nama,before,after,selisih,pending}] }
+function opCollectBinSummary(date) {
+  const bins = new Map();
+  const add = (bin, row) => { if (!bins.has(bin)) bins.set(bin, { bin, rows: [] }); bins.get(bin).rows.push(row); };
+  opAllOpname.filter(o => o.kind === 'result' && o.binDetail && (!date || o.date === date)).forEach(r => {
+    r.binDetail.forEach(d => add(d.bin, { date: r.date, sku: r.sku, nama: r.nama || '', before: d.before, after: d.after, selisih: d.selisih, pending: false }));
+  });
+  if (!date || date === opTodayStr()) {
+    opTargets.forEach(t => {
+      if (opFindResult(t.sku) || opScansForSku(t.sku).length === 0) return;
+      const nm = t.nama || opGetOHNama(t.sku) || (opStockMap[opKey_(t.sku)] && opStockMap[opKey_(t.sku)].nama) || 'N/A';
+      opBinBeforeAfterLive(t.sku).forEach(d => add(d.bin, { date: opTodayStr(), sku: t.sku, nama: nm, before: d.before, after: d.after, selisih: d.selisih, pending: true }));
+    });
+  }
+  return bins;
+}
+function opRenderBinSummary() {
+  const box = document.getElementById("opBinSummary"), sel = document.getElementById("opBinSumDate");
+  if (!box || !sel) return;
+  const today = opTodayStr();
+  const dates = Array.from(new Set([today].concat(opAllOpname.filter(o => o.kind === 'result' && o.binDetail).map(o => o.date)))).sort().reverse();
+  const cur = dates.includes(sel.value) ? sel.value : today;
+  sel.innerHTML = dates.map(d => `<option value="${d}" ${d === cur ? 'selected' : ''}>${opFmtDateLong(d)}</option>`).join('');
+  const f = (document.getElementById("opBinSumFilter").value || '').trim().toUpperCase();
+  const bins = Array.from(opCollectBinSummary(cur).values()).filter(b => !f || b.bin.includes(f)).sort((a, b) => a.bin.localeCompare(b.bin));
+  document.getElementById("opBinSumInfo").textContent = bins.length + " bin";
+  if (!bins.length) { box.innerHTML = `<div class="hint" style="padding:8px;">Belum ada data per bin pada tanggal ini. Scan & simpan SKU di sebuah bin dulu.</div>`; return; }
+  const fm = n => (n > 0 ? '+' + n : String(n));
+  const col = n => n === 0 ? 'var(--success)' : (n > 0 ? 'var(--warning)' : 'var(--danger)');
+  box.innerHTML = bins.map(b => {
+    const tb = b.rows.reduce((a, r) => a + r.before, 0), ta = b.rows.reduce((a, r) => a + r.after, 0);
+    const body = b.rows.slice().sort((x, y) => String(x.sku).localeCompare(String(y.sku))).map(r =>
+      `<tr><td style="font-family:var(--font-mono);">${escUid_(r.sku)}${r.pending ? ' <span class="badge warning">belum disimpan</span>' : ''}</td><td>${escUid_(r.nama)}</td><td class="c">${r.before}</td><td class="c">${r.after}</td><td class="c" style="font-weight:700; color:${col(r.selisih)};">${fm(r.selisih)}</td></tr>`).join('');
+    return `<div style="margin-bottom:12px;">
+      <div style="font-weight:700; margin-bottom:3px;">Bin <span style="font-family:var(--font-mono);">${escUid_(b.bin)}</span> — sebelum <b>${tb}</b> → sesudah <b>${ta}</b> unit, selisih <b style="color:${col(ta - tb)};">${fm(ta - tb)}</b> (${b.rows.length} SKU)</div>
+      <table style="font-size:12px; border-collapse:collapse; width:100%;"><thead><tr><th style="text-align:left;">SKU</th><th style="text-align:left;">Nama Barang</th><th class="c">Sebelum</th><th class="c">Sesudah</th><th class="c">Selisih</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  }).join('');
+}
+document.getElementById("opBinSumDate").addEventListener("change", opRenderBinSummary);
+document.getElementById("opBinSumFilter").addEventListener("input", opRenderBinSummary);
+document.getElementById("opBinSummaryBox").addEventListener("toggle", opRenderBinSummary);
+
 function renderOpTargetTable() {
+  try { if (document.getElementById("opBinSummaryBox").open) opRenderBinSummary(); } catch (e) { console.warn(e); }
   const tbody = document.getElementById("opTargetBody");
   const visSkus = new Set(opTargets.map(t => t.sku));
   const visResults = opResults.filter(r => visSkus.has(r.sku));
@@ -7110,6 +7225,15 @@ function renderOpTargetTable() {
         ${aksiCell}
       `;
       tbody.appendChild(tr);
+
+      // Sebelum vs Sesudah SO per bin (tersimpan di hasil; pratinjau live bila belum disimpan)
+      const binDetailRow = res ? (res.binDetail || null) : (scanCountToday > 0 ? opBinBeforeAfterLive(t.sku) : null);
+      if (binDetailRow && binDetailRow.length) {
+          const trB = document.createElement("tr");
+          trB.className = "op-detail";
+          trB.innerHTML = `<td colspan="5">${opBinDetailHtml_(binDetailRow, !res)}</td>`;
+          tbody.appendChild(trB);
+      }
 
       // Rincian selisih: SKU + UID/RFID mana yang hilang / lebih (hanya tampil bila ada selisih)
       if (hasDiff) {
@@ -7307,7 +7431,7 @@ function renderOpHistoryTable() {
           <tr><td>${it.sku}</td><td>${(it.nama || 'N/A').replace(/</g, '&lt;')}</td>
           <td class="c">${it.qtySystem}</td><td class="c">${it.qtyFisik}</td>
           <td class="c ${adjCls}">${it.adjSelisih > 0 ? '+' : ''}${it.adjSelisih}</td>
-          <td class="c">${it.bin || '-'}</td>
+          <td class="c">${it.binDetail && it.binDetail.length ? opBinDetailText_(it.binDetail).split('; ').join('<br>') : (it.bin || '-')}</td>
           <td class="c">${traceHtml}</td>
           <td>${remarkHtml}</td>
           <td class="c"><button class="btn btn-ghost btn-sm op-evidence-btn" onclick="opShowHistEvidence('${g.date}', '${safeSku}')" title="Lihat bukti histori scan">📎 ${scanCnt}</button></td></tr>`;
@@ -7366,10 +7490,39 @@ document.getElementById("btnOpExport").onclick = () => {
       return {
           "Tanggal": r.date, "SKU": r.sku, "Nama Barang": r.nama, "Qty Sistem (OH)": r.qtySystem, "Qty Fisik": r.qtyFisik,
           "Selisih Awal": r.selisih, "Penelusuran Tipe": (tgt && tgt.traceType) || "", "Penelusuran Qty": (tgt && tgt.traceQty != null) ? tgt.traceQty : "",
-          "Selisih Akhir": adj, "Penelusuran Remark": (tgt && tgt.traceRemark) || "", "Bin": r.bin || "-"
+          "Selisih Akhir": adj, "Penelusuran Remark": (tgt && tgt.traceRemark) || "", "Bin": r.bin || "-",
+          "Qty Sebelum SO (bin yang di-scan)": r.qtySebelum != null ? r.qtySebelum : "", "Qty Sesudah SO (bin yang di-scan)": r.qtySesudah != null ? r.qtySesudah : ""
       };
   });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(wsDetail), "Detail Semua Hasil");
+
+  // Sebelum vs Sesudah SO per bin
+  const binRows = [];
+  allResults.forEach(r => (r.binDetail || []).forEach(d => binRows.push({
+      "Tanggal": r.date, "SKU": r.sku, "Nama Barang": r.nama, "Bin": d.bin,
+      "Qty Sebelum SO": d.before, "Qty Sesudah SO": d.after, "Selisih": d.selisih,
+      "UID Hilang": (d.missing || []).join(" "), "UID Lebih": (d.extra || []).join(" "), "Status": "Tersimpan"
+  })));
+  opTargets.forEach(t => {
+      if (opFindResult(t.sku) || opScansForSku(t.sku).length === 0) return;
+      opBinBeforeAfterLive(t.sku).forEach(d => binRows.push({
+          "Tanggal": opTodayStr(), "SKU": t.sku, "Nama Barang": t.nama || opGetOHNama(t.sku) || "N/A", "Bin": d.bin,
+          "Qty Sebelum SO": d.before, "Qty Sesudah SO": d.after, "Selisih": d.selisih,
+          "UID Hilang": d.missing.join(" "), "UID Lebih": d.extra.join(" "), "Status": "Belum disimpan"
+      }));
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(binRows.length ? binRows : [{ "Info": "Belum ada data per bin" }]), "SO per Bin (Sebelum-Sesudah)");
+
+  // Ringkasan isi bin: total sebelum vs sesudah SO per bin (semua tanggal)
+  const binSumRows = [];
+  new Set(binRows.map(r => r["Tanggal"])).forEach(tgl => {
+      opCollectBinSummary(tgl).forEach(b => {
+          const tb = b.rows.reduce((a, r) => a + r.before, 0), ta = b.rows.reduce((a, r) => a + r.after, 0);
+          binSumRows.push({ "Tanggal": tgl, "Bin": b.bin, "Jumlah SKU": b.rows.length, "Total Sebelum SO": tb, "Total Sesudah SO": ta, "Selisih": ta - tb });
+      });
+  });
+  binSumRows.sort((a, b) => b["Tanggal"].localeCompare(a["Tanggal"]) || a["Bin"].localeCompare(b["Bin"]));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(binSumRows.length ? binSumRows : [{ "Info": "Belum ada data per bin" }]), "Ringkasan per Bin");
 
   // Selisih per UID/RFID: hasil tersimpan (semua tanggal) + hitungan hari ini yang belum disimpan
   const uidRows = [];
