@@ -452,6 +452,7 @@ body{-webkit-font-smoothing:antialiased;text-rendering:optimizeSpeed}
 .nav-item:hover [data-i=lock] svg{animation:icoShake .4s ease}
 .nav-item:hover [data-i=globe] svg{transform:rotate(25deg) scale(1.15)}
 .nav-item:hover [data-i=package] svg{animation:icoPop .45s var(--ease)}
+.nav-item:hover [data-i=tent] svg{transform:translateY(-2px) scale(1.14)}
 .nav-item:hover [data-i=users] svg{transform:scale(1.2) translateY(-1px)}
 .shell-icon:hover [data-i=settings] svg{transform:rotate(90deg)}
 .shell-icon:hover [data-i=logout] svg{transform:translateX(3px)}
@@ -520,7 +521,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
 [data-i=camera]{--ic:#ea580c}[data-i=upload]{--ic:#7c3aed}[data-i=refresh]{--ic:#0284c7}[data-i=clip]{--ic:#16a34a}
 [data-i=shuffle]{--ic:#db2777}[data-i=search]{--ic:#0891b2}[data-i=chart]{--ic:#2563eb}[data-i=history]{--ic:#9333ea}
 [data-i=scale]{--ic:#ca8a04}[data-i=trend]{--ic:#059669}[data-i=monitor]{--ic:#4f46e5}[data-i=lock]{--ic:#d97706}
-[data-i=hourglass]{--ic:#c026d3}[data-i=warehouse]{--ic:#0d9488}[data-i=inbox]{--ic:#65a30d}[data-i=globe]{--ic:#0d9488}[data-i=package]{--ic:#c2410c}[data-i=tag]{--ic:#e11d48}[data-i=qr]{--ic:#475569}[data-i=users]{--ic:#f97316}[data-i=doc]{--ic:#0369a1}
+[data-i=tent]{--ic:#f59e0b}[data-i=hourglass]{--ic:#c026d3}[data-i=warehouse]{--ic:#0d9488}[data-i=inbox]{--ic:#65a30d}[data-i=globe]{--ic:#0d9488}[data-i=package]{--ic:#c2410c}[data-i=tag]{--ic:#e11d48}[data-i=qr]{--ic:#475569}[data-i=users]{--ic:#f97316}[data-i=doc]{--ic:#0369a1}
 .ico{color:var(--ic,var(--accent))}
 /* isi duotone lembut pada bentuk tertutup */
 .ico svg rect,.ico svg circle,[data-i=camera] path,[data-i=package] path,[data-i=tag] path{fill:currentColor;fill-opacity:.16}
@@ -1572,28 +1573,63 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
 
       <!-- ============================ TAB: PEMINJAMAN / BAZAR ======================== -->
       <section id="tab-pinjam" class="hidden" style="height: 100%;">
-        <div class="card" style="display:flex; flex-direction:column; height:100%; padding:16px 20px; margin-bottom:0;">
-          <h3 class="card-header" style="margin-bottom:8px;">🎪 Peminjaman / Bazar</h3>
-          <div class="toolbar-row" style="margin-bottom:8px; flex-wrap:wrap; gap:8px;">
-            <div class="ma-chips" role="group"><button class="ma-chip on" id="pjModeOut">📤 Keluar (Pinjam / Bazar)</button><button class="ma-chip" id="pjModeIn">📥 Kembali ke Gudang</button></div>
+        <style>
+          .pj-seg{display:inline-flex; background:rgba(128,128,128,.14); border-radius:10px; padding:3px; gap:2px;}
+          .pj-seg button{border:0; background:transparent; padding:7px 14px; border-radius:8px; font-weight:700; font-size:13px; cursor:pointer; color:var(--text-muted); font-family:inherit; transition:.15s;}
+          .pj-seg button.on{background:var(--accent,#2563eb); color:#fff; box-shadow:0 2px 6px rgba(0,0,0,.18);}
+          .pj-form{display:flex; gap:10px; flex-wrap:wrap; padding:10px 12px; margin-bottom:8px; border:1px solid rgba(128,128,128,.25); border-radius:10px;}
+          .pj-field{display:flex; flex-direction:column; gap:3px; min-width:150px;}
+          .pj-field.grow{flex:1; min-width:200px;}
+          .pj-field label{font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em;}
+          .pj-field input,.pj-field select{width:100%;}
+          .pj-chipbar{display:flex; gap:6px; flex-wrap:wrap;}
+          .pj-empty{text-align:center; padding:42px 12px; color:var(--text-muted);}
+          .pj-empty .big{font-size:38px; margin-bottom:6px;}
+          .pj-late{background:rgba(220,38,38,.07);}
+          #pjResult .ok{color:var(--success); font-weight:700;}
+        </style>
+        <div class="card" style="height:100%; display:flex; flex-direction:column; padding:10px 12px;">
+          <div class="op-toolbar">
+            <div>
+              <div style="font-size:14px; font-weight:800; color:var(--text-main);">Peminjaman / Bazar</div>
+              <div class="hint" id="pjHint">Catat barang yang dipinjam atau dibawa ke bazar. Stok otomatis keluar dari gudang.</div>
+            </div>
+            <div class="toolbar-spacer"></div>
+            <div class="stat-card" style="margin:0; padding:6px 14px;"><div class="num" id="pjStatAll" style="font-size:18px;">0</div><div class="lbl">Sedang Keluar</div></div>
+            <div class="stat-card" style="margin:0; padding:6px 14px;"><div class="num" id="pjStatPinjam" style="font-size:18px; color:var(--warning);">0</div><div class="lbl">Pinjam</div></div>
+            <div class="stat-card" style="margin:0; padding:6px 14px;"><div class="num" id="pjStatBazar" style="font-size:18px; color:var(--accent-hover);">0</div><div class="lbl">Bazar</div></div>
+            <div class="stat-card" style="margin:0; padding:6px 14px;"><div class="num" id="pjStatLate" style="font-size:18px; color:var(--danger);">0</div><div class="lbl">Lewat Tempo</div></div>
           </div>
-          <div class="toolbar-row" style="margin-bottom:8px; flex-wrap:wrap; gap:8px;" id="pjFormOut">
-            <select id="pjType" class="input-sm"><option value="PINJAM">Peminjaman (marketing/lainnya)</option><option value="BAZAR">Bazar / Event</option></select>
-            <input type="text" id="pjWho" class="input-sm" placeholder="Nama peminjam / nama bazar *" style="min-width:210px;">
-            <label class="hint" style="margin:0;">Est. kembali <input type="date" id="pjEst" class="input-sm"></label>
-            <input type="text" id="pjNote" class="input-sm" placeholder="Catatan (opsional)" style="min-width:180px;">
-            <input type="text" id="pjBin" class="input-sm" placeholder="Bin asal (hanya bila scan SKU)" style="min-width:170px; text-transform:uppercase;">
+
+          <div class="op-toolbar">
+            <div class="pj-seg" role="tablist"><button class="on" id="pjModeOut">📤 Keluar</button><button id="pjModeIn">📥 Kembali ke Gudang</button></div>
+            <div class="toolbar-spacer"></div>
+            <button class="btn btn-ghost btn-sm" id="pjRefresh" title="Muat ulang">🔄</button>
+            <button class="btn btn-ghost btn-sm" id="pjExport" title="Export Excel">⬇️ Export</button>
           </div>
-          <div class="toolbar-row" style="margin-bottom:8px; gap:8px;">
-            <input type="text" id="pjScan" class="input" placeholder="Scan RFID / barcode lalu Enter..." autocomplete="off" style="flex:1; font-family:var(--font-mono);">
-            <input type="text" id="pjSearch" class="input-sm toolbar-search" placeholder="🔍 Cari peminjam / SKU / RFID...">
-            <div class="ma-chips" role="group"><button class="ma-chip on" data-pjc="all">Semua</button><button class="ma-chip" data-pjc="PINJAM">Pinjam</button><button class="ma-chip" data-pjc="BAZAR">Bazar</button></div>
+
+          <div class="pj-form" id="pjFormOut">
+            <div class="pj-field"><label for="pjType">Jenis</label><select id="pjType" class="input-sm"><option value="PINJAM">🤝 Peminjaman</option><option value="BAZAR">🎪 Bazar / Event</option></select></div>
+            <div class="pj-field grow"><label for="pjWho" id="pjWhoLbl">Nama peminjam <b style="color:var(--danger);">*</b></label><input type="text" id="pjWho" class="input-sm" placeholder="mis. Tim Marketing - Rina" autocomplete="off"></div>
+            <div class="pj-field"><label for="pjEst">Estimasi kembali</label><input type="date" id="pjEst" class="input-sm"></div>
+            <div class="pj-field grow"><label for="pjNote">Catatan</label><input type="text" id="pjNote" class="input-sm" placeholder="opsional" autocomplete="off"></div>
+          </div>
+
+          <div class="op-scanbar">
+            <input type="text" id="pjBin" class="input-sm" placeholder="📍 Bin (hanya bila scan SKU tanpa RFID)" autocomplete="off" style="text-transform:uppercase;">
+            <input type="text" id="pjScan" class="scan-input" placeholder="🔫 Tembak barcode / QR RFID lalu Enter..." autocomplete="off" style="flex:2;">
+            <div id="pjResult" class="hint" style="min-width:220px;"></div>
+          </div>
+
+          <div class="op-toolbar" style="margin-top:8px;">
+            <input type="text" id="pjSearch" class="input-sm toolbar-search" placeholder="🔍 Cari peminjam / SKU / RFID / bin...">
+            <div class="ma-chips pj-chipbar" role="group"><button class="ma-chip on" data-pjc="all">Semua</button><button class="ma-chip" data-pjc="PINJAM">🤝 Pinjam</button><button class="ma-chip" data-pjc="BAZAR">🎪 Bazar</button><button class="ma-chip" data-pjc="LATE">⚠ Lewat tempo</button></div>
+            <div class="toolbar-spacer"></div>
             <span class="toolbar-count" id="pjInfo"></span>
-            <button class="btn btn-ghost btn-sm" id="pjExport">⬇️ Export</button>
           </div>
-          <div class="hint" style="margin-bottom:8px;">Unit yang dipinjam/dibawa bazar <b>keluar dari stok gudang</b> (tidak lagi dihitung "hilang" di Stock Opname / Cycle Count) dan tercatat di Tracking Movement. Saat barang kembali, scan di mode <b>Kembali</b> atau klik tombol Kembalikan; unit masuk lagi ke bin asal.</div>
-          <div class="scroll-table fill"><table>
-            <thead><tr><th>Tgl Keluar</th><th class="c">Tipe</th><th>Peminjam / Bazar</th><th>SKU / Nama</th><th>RFID</th><th class="c">Bin Asal</th><th class="c">Est. Kembali</th><th>Catatan</th><th class="c">Aksi</th></tr></thead>
+
+          <div class="scroll-table fill"><table class="op-table">
+            <thead><tr><th>Keluar</th><th class="c">Jenis</th><th>Peminjam / Bazar</th><th>SKU / Nama Barang</th><th>RFID</th><th class="c">Bin Asal</th><th class="c">Est. Kembali</th><th>Catatan</th><th class="c">Aksi</th></tr></thead>
             <tbody id="pjBody"><tr><td colspan="9" class="hint" style="text-align:center; padding:24px;">Memuat...</td></tr></tbody>
           </table></div>
         </div>
@@ -9719,15 +9755,18 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   }
   function visible() {
     const q = ($("pjSearch").value || "").trim().toLowerCase();
-    return list.filter(r => (chip === "all" || r.type === chip) && (!q || [r.who, r.sku, r.nama, r.uid, r.bin, r.note].join(" ").toLowerCase().includes(q)));
+    return list.filter(r => (chip === "all" || (chip === "LATE" ? (r.est && r.est < today()) : r.type === chip)) && (!q || [r.who, r.sku, r.nama, r.uid, r.bin, r.note].join(" ").toLowerCase().includes(q)));
   }
   function render() {
     const rows = visible(), t = today();
-    $("pjInfo").textContent = rows.length + " unit sedang keluar";
+    const nLate = list.filter(r => r.est && r.est < t).length;
+    $("pjStatAll").textContent = list.length; $("pjStatPinjam").textContent = list.filter(r => r.type === "PINJAM").length;
+    $("pjStatBazar").textContent = list.filter(r => r.type === "BAZAR").length; $("pjStatLate").textContent = nLate;
+    $("pjInfo").textContent = rows.length + " unit ditampilkan";
     $("pjBody").innerHTML = rows.length ? rows.map((r, i) => {
       const late = r.est && r.est < t;
-      return `<tr><td>${escUid_(fmtD(r.ts))}</td><td class="c"><span class="badge ${r.type === "BAZAR" ? "transfer" : "warning"}">${r.type}</span></td><td style="font-weight:700;">${escUid_(r.who || "-")}</td><td><b style="font-family:var(--font-mono);">${escUid_(r.sku || "")}</b><br><span class="hint">${escUid_(r.nama || "")}</span></td><td style="font-family:var(--font-mono);">${escUid_(r.uid || "-")}</td><td class="c">${escUid_(r.bin || "-")}</td><td class="c">${r.est ? escUid_(r.est) : "-"}${late ? ' <span class="badge bad">lewat</span>' : ""}</td><td>${escUid_(r.note || "")}</td><td class="c"><button class="btn btn-accent btn-sm" data-pjret="${escUid_(r.ref_id)}">↩ Kembalikan</button></td></tr>`;
-    }).join("") : `<tr><td colspan="9" class="hint" style="text-align:center; padding:24px;">Tidak ada barang yang sedang dipinjam / dibawa bazar.</td></tr>`;
+      return `<tr${late ? ' class="pj-late"' : ""}><td>${escUid_(fmtD(r.ts))}</td><td class="c"><span class="badge ${r.type === "BAZAR" ? "transfer" : "warning"}">${r.type}</span></td><td style="font-weight:700;">${escUid_(r.who || "-")}</td><td><b style="font-family:var(--font-mono);">${escUid_(r.sku || "")}</b><br><span class="hint">${escUid_(r.nama || "")}</span></td><td style="font-family:var(--font-mono);">${escUid_(r.uid || "-")}</td><td class="c">${escUid_(r.bin || "-")}</td><td class="c">${r.est ? escUid_(r.est) : "-"}${late ? ' <span class="badge bad">lewat</span>' : ""}</td><td>${escUid_(r.note || "")}</td><td class="c" style="white-space:nowrap;"><button class="btn btn-ghost btn-sm" data-pjedit="${escUid_(r.ref_id)}" title="Edit jenis / nama / estimasi / catatan">✏️ Edit</button> <button class="btn btn-accent btn-sm" data-pjret="${escUid_(r.ref_id)}">↩ Kembalikan</button></td></tr>`;
+    }).join("") : `<tr><td colspan="9"><div class="pj-empty"><div class="big">🎪</div><b>Belum ada barang yang sedang keluar</b><div class="hint">Isi form di atas lalu scan RFID untuk mencatat peminjaman atau barang bazar.</div></div></td></tr>`;
   }
   async function refresh() { try { list = await loadOpen(); } catch (e) { list = []; console.warn(e); } render(); }
   window.pinjamRefresh_ = refresh;
@@ -9752,23 +9791,59 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       const bin = $("pjBin").value.trim().toUpperCase();
       const r = list.find(x => U ? normUid_(x.uid) === U : (String(x.sku).toUpperCase() === String(res.sku).toUpperCase() && !x.uid && (!bin || x.bin === bin)));
       if (!r) { toast(U ? `RFID ${res.uid} tidak tercatat sedang dipinjam / bazar` : `SKU ${res.sku} tidak tercatat sedang dipinjam / bazar`, "bad"); return; }
-      if (await giveBack(r)) await refresh();
+      if (await giveBack(r)) { $("pjResult").innerHTML = `<span class="ok">✓ ${escUid_(r.sku)} kembali ke Bin ${escUid_(r.bin || "-")}</span>`; await refresh(); }
       return;
     }
-    const who = $("pjWho").value.trim();
+    const who = $("pjWho").value.trim().replace(/\|/g, "/");
     if (!who) { toast("Isi nama peminjam / nama bazar dulu", "bad"); $("pjWho").focus(); return; }
     const bin = $("pjBin").value.trim().toUpperCase();
     if (!bin && !res.uid) { toast("Scan SKU tanpa RFID wajib isi Bin asal", "bad"); return; }
     const tipe = $("pjType").value;
     const remark = `[${tipe}] ${who} | Est: ${$("pjEst").value || ""} | ${$("pjNote").value.trim() || "-"}`;
-    if (await executeDeduction(res.sku, bin, tipe, remark, false, res.uid)) await refresh();
+    if (await executeDeduction(res.sku, bin, tipe, remark, false, res.uid)) { $("pjResult").innerHTML = `<span class="ok">✓ ${escUid_(res.sku)} ${tipe === "BAZAR" ? "dibawa ke" : "dipinjam oleh"} ${escUid_(who)}</span>`; await refresh(); }
   }
   $("pjScan").addEventListener("keydown", e => { if (e.key !== "Enter") return; const v = $("pjScan").value.trim(); $("pjScan").value = ""; if (v) onScan(v); });
   $("pjSearch").addEventListener("input", render);
   document.querySelectorAll("[data-pjc]").forEach(b => b.onclick = () => { chip = b.dataset.pjc; document.querySelectorAll("[data-pjc]").forEach(x => x.classList.toggle("on", x === b)); render(); });
-  const setMode = m => { mode = m; $("pjModeOut").classList.toggle("on", m === "out"); $("pjModeIn").classList.toggle("on", m === "in"); ["pjType", "pjWho", "pjEst", "pjNote"].forEach(id => { const el = $(id); (el.closest("label") || el).style.display = m === "out" ? "" : "none"; }); $("pjBin").placeholder = m === "out" ? "Bin asal (hanya bila scan SKU)" : "Bin (hanya bila scan SKU)"; $("pjScan").focus(); };
+  const setMode = m => { mode = m; $("pjModeOut").classList.toggle("on", m === "out"); $("pjModeIn").classList.toggle("on", m === "in"); $("pjFormOut").style.display = m === "out" ? "" : "none"; $("pjResult").innerHTML = "";
+    $("pjHint").textContent = m === "out" ? "Catat barang yang dipinjam atau dibawa ke bazar. Stok otomatis keluar dari gudang." : "Scan RFID barang yang kembali, atau klik Kembalikan di tabel. Unit masuk lagi ke bin asal.";
+    $("pjScan").placeholder = m === "out" ? "🔫 Tembak barcode / QR RFID lalu Enter..." : "🔫 Scan RFID barang yang KEMBALI lalu Enter..."; $("pjScan").focus(); };
+  $("pjType").onchange = () => { const b = $("pjType").value === "BAZAR"; $("pjWhoLbl").innerHTML = (b ? "Nama bazar / event" : "Nama peminjam") + ' <b style="color:var(--danger);">*</b>'; $("pjWho").placeholder = b ? "mis. Bazar Mall Kokas 20-22 Nov" : "mis. Tim Marketing - Rina"; };
+  $("pjRefresh").onclick = refresh;
   $("pjModeOut").onclick = () => setMode("out"); $("pjModeIn").onclick = () => setMode("in");
-  $("pjBody").addEventListener("click", async e => { const b = e.target.closest("[data-pjret]"); if (!b) return; const r = list.find(x => x.ref_id === b.dataset.pjret); if (r && confirm(`Kembalikan ${r.sku}${r.uid ? " (" + r.uid + ")" : ""} dari ${r.who} ke Bin ${r.bin || "-"}?`) && await giveBack(r)) await refresh(); });
+  function openEdit(r) {
+    const ov = document.createElement("div");
+    ov.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:9999; display:flex; align-items:center; justify-content:center; padding:16px;";
+    ov.innerHTML = `<div style="background:var(--bg-card); color:var(--text-main); border:1px solid var(--border); border-radius:12px; padding:18px; width:min(440px,100%); box-shadow:0 12px 40px rgba(0,0,0,.35);">
+      <div style="font-weight:800; font-size:15px; margin-bottom:2px;">✏️ Edit ${r.type === "BAZAR" ? "Bazar" : "Peminjaman"}</div>
+      <div class="hint" style="margin-bottom:12px;">${escUid_(r.sku)}${r.uid ? " · " + escUid_(r.uid) : ""} · Bin ${escUid_(r.bin || "-")}</div>
+      <div class="pj-field" style="margin-bottom:8px;"><label>Jenis</label><select id="pjEdType" class="input-sm"><option value="PINJAM" ${r.type === "PINJAM" ? "selected" : ""}>🤝 Peminjaman</option><option value="BAZAR" ${r.type === "BAZAR" ? "selected" : ""}>🎪 Bazar / Event</option></select></div>
+      <div class="pj-field" style="margin-bottom:8px;"><label>Peminjam / Nama bazar *</label><input id="pjEdWho" class="input-sm" value="${escUid_(r.who || "")}"></div>
+      <div class="pj-field" style="margin-bottom:8px;"><label>Estimasi kembali</label><input type="date" id="pjEdEst" class="input-sm" value="${escUid_(r.est || "")}"></div>
+      <div class="pj-field" style="margin-bottom:14px;"><label>Catatan</label><input id="pjEdNote" class="input-sm" value="${escUid_(r.note || "")}"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end;"><button class="btn btn-ghost btn-sm" id="pjEdCancel">Batal</button><button class="btn btn-accent btn-sm" id="pjEdSave">💾 Simpan</button></div></div>`;
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.querySelector("#pjEdCancel").onclick = close;
+    ov.addEventListener("mousedown", e => { if (e.target === ov) close(); });
+    ov.querySelector("#pjEdSave").onclick = async () => {
+      const who = ov.querySelector("#pjEdWho").value.trim().replace(/\|/g, "/");
+      if (!who) { toast("Nama peminjam / bazar wajib diisi", "bad"); return; }
+      const tipe = ov.querySelector("#pjEdType").value, est = ov.querySelector("#pjEdEst").value || "", note = ov.querySelector("#pjEdNote").value.trim().replace(/\|/g, "/") || "-";
+      const mv = Object.assign({}, r); delete mv.who; delete mv.est; delete mv.note;
+      mv.type = tipe; mv.remark = `[${tipe}] ${who} | Est: ${est} | ${note}`;
+      await idbAddMovement(mv);
+      close(); toast("✓ Data " + (tipe === "BAZAR" ? "bazar" : "peminjaman") + " diperbarui", "good"); await refresh();
+    };
+    ov.querySelector("#pjEdWho").focus();
+  }
+  $("pjBody").addEventListener("click", async e => {
+    const ed = e.target.closest("[data-pjedit]");
+    if (ed) { const r = list.find(x => x.ref_id === ed.dataset.pjedit); if (r) openEdit(r); return; }
+    const b = e.target.closest("[data-pjret]"); if (!b) return;
+    const r = list.find(x => x.ref_id === b.dataset.pjret);
+    if (r && confirm(`Kembalikan ${r.sku}${r.uid ? " (" + r.uid + ")" : ""} dari ${r.who} ke Bin ${r.bin || "-"}?`) && await giveBack(r)) await refresh();
+  });
   $("pjExport").onclick = () => { const rows = visible(); if (!rows.length) { toast("Tidak ada data untuk di-export", "bad"); return; }
     const ws = XLSX.utils.json_to_sheet(rows.map(r => ({ "Tgl Keluar": fmtD(r.ts), "Tipe": r.type, "Peminjam/Bazar": r.who, "SKU": r.sku, "Nama Barang": r.nama, "RFID": r.uid || "", "Bin Asal": r.bin, "Est. Kembali": r.est, "Catatan": r.note, "Dicatat Oleh": r.by || "" })));
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Pinjam-Bazar"); XLSX.writeFile(wb, "Peminjaman_Bazar_" + today() + ".xlsx"); };
@@ -10369,10 +10444,11 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     stop:'<path d="M7.86 2h8.28L22 7.86v8.28L16.14 22H7.86L2 16.14V7.86z"/><path d="m15 9-6 6M9 9l6 6"/>',
     settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
     doc:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>',
+    tent:'<path d="M3.5 21 14 3"/><path d="M20.5 21 10 3"/><path d="M15.5 21 12 15l-3.5 6"/><path d="M2 21h20"/>',
     logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>'
   };
   var E={"📷":"camera","📤":"upload","🔄":"refresh","📋":"clip","🔀":"shuffle","🔎":"search","📊":"chart","📜":"history",
-    "⚖":"scale","📈":"trend","🖥":"monitor","🔒":"lock","🌍":"globe","📦":"package","🏷":"tag","🔳":"qr","👥":"users","⏳":"hourglass"};
+    "⚖":"scale","📈":"trend","🖥":"monitor","🔒":"lock","🌍":"globe","📦":"package","🏷":"tag","🔳":"qr","👥":"users","⏳":"hourglass","🎪":"tent"};
   var NAV_ICON={navHistoryCCTF:"doc",navTransferGudang:"warehouse",navPoInbound:"inbox"}; // menu yang emoji-nya dipakai bersama: ikon dibedakan per menu
   var IDS={btnToggleSidebar:"panel",btnCancelSync:"stop",btnCloudSettings:"settings",btnLogout:"logout"};
   function svg(n){return '<span class="ico" data-i="'+n+'" aria-hidden="true"><svg viewBox="0 0 24 24">'+P[n]+'</svg></span>';}
