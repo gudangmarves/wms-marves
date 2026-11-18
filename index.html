@@ -1422,6 +1422,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
             <div class="toolbar-spacer"></div>
             <span class="toolbar-count">Log: <b id="statMoveQty">0</b></span>
             <button class="btn btn-ghost btn-sm" id="btnExportMovements" title="Export hasil sesuai filter yang aktif (kosongkan filter untuk export semua data)">⬇️ Export</button>
+            <button class="btn btn-danger btn-sm" id="btnDeleteDocData" title="Hapus SEMUA data satu No. Dokumen (stok, Data Bin Reject, log Inbound/Outbound/Transfer unit-nya) di Lokal & Cloud — khusus Admin, ada backup otomatis">🗑️ Hapus Dokumen</button>
             <button class="btn btn-danger btn-sm" id="btnClearMovements" title="Bersihkan log TRANSFER saja (Inbound/Outbound/Sales/Retur/Delete tetap disimpan)">🗑️ Transfer</button>
             <button class="btn btn-danger btn-sm" id="btnClearMovementsAll" title="Hapus SEMUA Movement Log — Lokal &amp; Cloud (Google Sheets)">🗑️ Semua (Cloud)</button>
           </div>
@@ -8961,6 +8962,85 @@ document.getElementById("btnExportMovements").onclick = async ()=>{
   const filtered = !!(String(q).trim() || sd || ed);
   XLSX.writeFile(wb, `Tracking_Movement_${filtered ? "Filter" : "Semua"}_${Date.now()}.xlsx`);
   toast(`✓ Export ${wsData.length} baris (${filtered ? "sesuai filter" : "semua data"})`, "good");
+};
+
+/* ---- Hapus SEMUA data satu No. Dokumen (Tracking Movement): khusus Admin, Lokal & Cloud ----
+   Cakupan (dihitung dulu & ditampilkan sebelum dihapus):
+   (1) baris stok (scanlog; termasuk Data Bin Reject dan unit yang sudah keluar) ber-docNo tsb, dan yang id-nya dirujuk log ber-docNo tsb;
+   (2) semua log pergerakan ber-docNo tsb, serta log lain milik unit yang sama (ref_id sama: Outbound, Transfer Bin, dst);
+   (3) hitungan "Sudah Masuk" dokumen tsb di menu Mutasi (bila ada di perangkat ini) di-nol-kan supaya input ulang tidak terhitung dobel.
+   Tidak disentuh: Mapping RFID, Master Produk, data unit LAIN, Staging Inbound yang belum dieksekusi.
+   Sebelum menghapus, salinan data dikunduh otomatis (JSON). Dicatat 1 log "DOK_HAPUS" (tanpa docNo, supaya tidak ikut terhapus saat diulang). */
+async function deleteDocumentData_(docInput){
+  if(!isAdminNow_()){ toast("Hanya Admin yang bisa menghapus data dokumen.", "bad"); return; }
+  const nk = (v) => String(v == null ? "" : v).replace(/[\s\u00a0\u200b]+/g, " ").trim().toUpperCase();
+  const typed = prompt("Hapus SEMUA data satu No. Dokumen.\n\nMasukkan No. Dokumen persis (contoh: IT.2026.11.00098):", nk(docInput));
+  if(typed === null) return;
+  const doc = nk(typed);
+  if(!doc){ toast("No. Dokumen kosong.", "warning"); return; }
+  const scansAll = (await idbGetAllScans()).filter(Boolean);
+  const movesAll = (await idbGetAllMovements()).filter(Boolean);
+  const isOp = (x) => String(x.ref_id || "").startsWith("OPNAME_");
+  const refIds = new Set();
+  scansAll.forEach(r => { if(nk(r.docNo) === doc) refIds.add(r.id); });
+  movesAll.forEach(m => { if(nk(m.docNo) === doc && m.ref_id && !isOp(m)) refIds.add(m.ref_id); });
+  const sc = scansAll.filter(r => nk(r.docNo) === doc || refIds.has(r.id));
+  const mv = movesAll.filter(m => nk(m.docNo) === doc || (m.ref_id && !isOp(m) && refIds.has(m.ref_id)));
+  if(!sc.length && !mv.length){ toast(`Tidak ada data dengan No. Dokumen ${doc}.`, "warning"); return; }
+  const byType = {}; mv.forEach(m => { byType[m.type] = (byType[m.type] || 0) + 1; });
+  const typeTxt = Object.keys(byType).sort().map(t => `${t} ${byType[t]}`).join(", ");
+  const inStock = sc.filter(r => r.type !== "OUT").length, outRows = sc.length - inStock;
+  const rjRows = sc.filter(r => r.isReject || String(r.bin || "").toUpperCase().startsWith("RJ-")).length;
+  const docOther = new Set(); mv.forEach(m => { const d = nk(m.docNo); if(d && d !== doc) docOther.add(d); });
+  const mt = (()=>{ try{ return mtDoc_(doc); }catch(e){ return null; } })();
+  const info = `HAPUS DATA DOKUMEN ${doc}\n\nBaris stok: ${sc.length} (masih di stok ${inStock}, sudah keluar ${outRows}, di Bin Reject ${rjRows})\nLog Tracking: ${mv.length}\n  ${typeTxt}`
+    + (docOther.size ? `\n\nPERHATIAN: ada log milik unit-unit ini dengan No. Dokumen lain: ${[...docOther].slice(0,5).join(", ")}` : "")
+    + (mt ? `\n\nDokumen ini ada di menu Mutasi: hitungan "Sudah Masuk" akan di-nol-kan.` : "")
+    + `\n\nStok akan berkurang sesuai unit yang masih di stok. Dihapus di Lokal DAN Cloud. Salinan (backup JSON) diunduh otomatis.`;
+  if(!confirm(info + "\n\nLanjutkan?")) return;
+  const pass = prompt("Masukkan Password Administrator untuk menghapus data dokumen " + doc + ":");
+  if(pass === null) return;
+  if(!isAdminPw_(pass)){ toast("Password salah! Akses ditolak.", "bad"); return; }
+  const again = prompt(`Konfirmasi terakhir: ketik ulang No. Dokumen (${doc}) untuk menghapus ${sc.length} baris stok dan ${mv.length} log.`);
+  if(again === null || nk(again) !== doc){ toast("No. Dokumen tidak sama, penghapusan dibatalkan.", "warning"); return; }
+  // backup dulu
+  try{
+    const blob = new Blob([JSON.stringify({ doc, at: new Date().toISOString(), by: curBy_(), scanlog: sc, movementlog: mv, mutasi: mt ? mt.d : null }, null, 1)], { type: "application/json" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = `Backup_Hapus_${doc.replace(/[^A-Z0-9._-]/g, "_")}_${new Date().toISOString().slice(0,19).replace(/[:T]/g, "-")}.json`;
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  }catch(e){
+    console.error(e);
+    if(!confirm("Backup otomatis GAGAL diunduh. Tetap hapus tanpa backup?")) return;
+  }
+  const scIds = sc.map(r => r.id), mvIds = mv.map(m => m.id);
+  await idbRawDeleteMany_("scanlog", scIds);
+  await idbRawDeleteMany_("movementlog", mvIds);
+  if(scIds.length) await idbEnqueueSync("scanlog", "del", scIds);
+  if(mvIds.length) await idbEnqueueSync("movementlog", "del", mvIds);
+  if(mt){
+    try{
+      (mt.d.items || []).forEach(it => { it.recv = 0; });
+      if(mt.d.extra) mt.d.extra = {};
+      mtSave_();
+      try{ renderMutasi_(); }catch(e){}
+    }catch(e){ console.warn(e); }
+  }
+  await recordMovement("DOKHAPUS_" + Date.now(), "DOK_HAPUS", "-", "Hapus Data Dokumen", "-",
+    `Hapus data dokumen ${doc} (Admin): stok ${scIds.length} baris, log ${mvIds.length}${mt ? ", Mutasi di-nol-kan" : ""}`);
+  try{ invalidateUidIndex(); }catch(e){}
+  try{ allScanCache = null; }catch(e){}
+  try{ flushSyncQueue(); }catch(e){}
+  toast(`✓ Dokumen ${doc} dibersihkan: stok ${scIds.length} baris, log ${mvIds.length}`, "good");
+}
+document.getElementById("btnDeleteDocData").onclick = async () => {
+  const b = document.getElementById("btnDeleteDocData");
+  b.disabled = true;
+  try{
+    await deleteDocumentData_(document.getElementById("moveSearchSku").value);
+    loadMovements(document.getElementById("moveSearchSku").value, document.getElementById("moveStartDate").value, document.getElementById("moveEndDate").value);
+  }catch(err){ console.error(err); toast("Gagal menghapus data dokumen: " + err.message, "bad"); }
+  b.disabled = false;
 };
 
 document.getElementById("btnClearMovements").onclick = async ()=>{
