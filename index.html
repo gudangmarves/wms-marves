@@ -8558,6 +8558,7 @@ async function loadMovements(filterSku = "", startDate = "", endDate = "") {
             aksiHtml = `<span class="badge muted" title="Inbound berlebih dihapus oleh ${escUid_(r.revertedBy || '-')} pada ${r.revertedAt ? new Date(r.revertedAt).toLocaleString('id-ID') : '-'}">🗑 DIHAPUS</span>`;
         } else if ((r.type === 'INBOUND' || r.type === 'REJECT') && !isOpnameMove && !r.reverted && isAdminNow_()) {
             aksiHtml = `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-mv-po="${escUid_(r.id)}" title="Edit No. PO pada log Inbound ini (stok tidak berubah, khusus Admin)">✏️ PO</button>`
+              + ` <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-mv-doc="${escUid_(r.id)}" title="Edit No. Dokumen pada log ini (stok tidak berubah, khusus Admin)">✏️ Dok</button>`
               + (r.type === 'INBOUND' ? ` <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-mv-delin="${escUid_(r.id)}" title="Hapus Inbound berlebih: unit ini dikeluarkan dari stok dan log dibatalkan (khusus Admin)">🗑️</button>` : '');
         }
         if (r.reverted) tr.style.opacity = "0.55";
@@ -8570,7 +8571,7 @@ async function loadMovements(filterSku = "", startDate = "", endDate = "") {
           <td class="sku">${uidOf_(r) ? escUid_(uidOf_(r)) : '<span class="hint">-</span>'}</td>
           <td>${safeRemark}${safeDocNo ? ` <span class="badge transfer">DOK: ${safeDocNo}</span>` : ''} <br> <span class="mv-nama">${safeNama}</span></td>
           <td>${r.by ? escUid_(r.by) : '<span class="hint">-</span>'}</td>
-          <td class="c">${aksiHtml}</td>
+          <td class="c" style="white-space:nowrap;">${aksiHtml}</td>
         `;
         tbody.appendChild(tr);
       });
@@ -8659,6 +8660,51 @@ async function editMovementPo_(moveId){
   try{ invalidateUidIndex(); }catch(e){}
   toast(newPo ? `✓ No. PO ${newPo} disimpan pada ${mvOut.length} log` : `✓ No. PO dilepas dari ${mvOut.length} log`, "good");
 }
+/* ---- Edit No. Dokumen pada log Inbound/Reject (Tracking Movement): khusus Admin ----
+   Mengubah field docNo pada log (movement) dan baris stok yang sesuai (scan, id = ref_id log).
+   Jumlah stok, Bin, SKU, RFID, No. PO tidak berubah. Pilihan ruang lingkup: baris ini saja, atau semua log dengan dokumen lama yang sama.
+   Catatan: hitungan "Sudah Masuk" pada Dokumen Mutasi lokal TIDAK dihitung ulang oleh fitur ini. */
+async function editMovementDoc_(moveId){
+  if(!isAdminNow_()){ toast("Hanya Admin yang bisa mengedit No. Dokumen pada data Inbound.", "bad"); return; }
+  const moves = await idbGetAllMovements();
+  const m = moves.find(x => x && x.id === moveId);
+  if(!m || (m.type !== "INBOUND" && m.type !== "REJECT")){ toast("Log Inbound tidak ditemukan.", "bad"); return; }
+  if(m.reverted){ toast("Log ini sudah dibatalkan, tidak bisa diedit.", "warning"); return; }
+  if(String(m.ref_id || "").startsWith("OPNAME_")){ toast("Penyesuaian Stock Opname tidak punya No. Dokumen.", "warning"); return; }
+  const oldDoc = poNk_(m.docNo);
+  const isInb = (x) => x && !x.reverted && (x.type === "INBOUND" || x.type === "REJECT") && !String(x.ref_id || "").startsWith("OPNAME_");
+  const group = oldDoc ? moves.filter(x => isInb(x) && poNk_(x.docNo) === oldDoc) : [m];
+  const ans = prompt(`Edit No. Dokumen\n\nSKU: ${m.sku || "-"}\nNama: ${m.nama || "-"}\nNo. Dokumen sekarang: ${oldDoc || "(kosong)"}\n\nIsi No. Dokumen yang BENAR.\nKosongkan untuk melepas No. Dokumen.\n\n(Jumlah stok barang TIDAK berubah.)`, oldDoc);
+  if(ans === null) return;
+  const newDoc = poNk_(ans).replace(/[<>"'`\\|]/g, "");
+  if(newDoc === oldDoc){ toast("No. Dokumen baru sama dengan yang lama.", "warning"); return; }
+  let targets = [m];
+  if(group.length > 1){
+    const sc = prompt(`Ada ${group.length} log Inbound dengan Dokumen ${oldDoc}.\n\nBerlaku untuk?\n1 = baris ini saja\n2 = semua ${group.length} log tersebut\n\nKetik 1 atau 2 (batal = klik Cancel).`, "1");
+    if(sc === null) return;
+    if(String(sc).trim() === "2") targets = group;
+    else if(String(sc).trim() !== "1"){ toast("Pilihan tidak valid, tidak ada yang diubah.", "warning"); return; }
+  }
+  let mtWarn = "";
+  try{ if((oldDoc && mtDoc_(oldDoc)) || (newDoc && mtDoc_(newDoc))) mtWarn = "\n\nPERHATIAN: dokumen ini terdaftar di menu Mutasi. Hitungan \"Sudah Masuk\" di Mutasi TIDAK ikut berubah."; }catch(e){}
+  if(!confirm((newDoc ? `Ubah No. Dokumen ${oldDoc || "(kosong)"} menjadi ${newDoc} pada ${targets.length} log Inbound?` : `Lepas No. Dokumen ${oldDoc} dari ${targets.length} log Inbound?\n\nBarang tetap ada di stok.`) + mtWarn)) return;
+  const now = new Date().toISOString(), by = curBy_();
+  const scanById = new Map((await idbGetAllScans()).filter(Boolean).map(r => [r.id, r]));
+  const mvOut = [], scOut = [];
+  targets.forEach(t => {
+    t.docEditedFrom = t.docEditedFrom || oldDoc || "-"; t.docEditedBy = by; t.docEditedAt = now;
+    t.docNo = newDoc;
+    mvOut.push(t);
+    const r = t.ref_id ? scanById.get(t.ref_id) : null;
+    if(r){ r.docNo = newDoc; scOut.push(r); }
+  });
+  await idbAddMovementBulk(mvOut);
+  if(scOut.length) await idbAddScanBulk(scOut);
+  await recordMovement("DOK_FIX_" + Date.now(), "DOK_KOREKSI", "-", "Koreksi No. Dokumen", "-",
+    `Edit No. Dokumen dari Tracking Movement: ${oldDoc || "(kosong)"} → ${newDoc || "(dilepas)"}; ${mvOut.length} log, ${scOut.length} baris stok`);
+  try{ invalidateUidIndex(); }catch(e){}
+  toast(newDoc ? `✓ No. Dokumen ${newDoc} disimpan pada ${mvOut.length} log` : `✓ No. Dokumen dilepas dari ${mvOut.length} log`, "good");
+}
 /* ---- Hapus Inbound berlebih dari Tracking Movement: khusus Admin ----
    Efek: (1) unit pada baris stok yang terkait (id = ref_id log) dihapus dari stok, (2) log INBOUND ditandai "reverted"
    (tetap tersimpan sebagai jejak audit dan otomatis tidak dihitung di Rekap Inbound / analisa lain), (3) dicatat log DELETE,
@@ -8710,6 +8756,16 @@ document.getElementById("movementBody").addEventListener("click", async (e) => {
       loadMovements(document.getElementById("moveSearchSku").value, document.getElementById("moveStartDate").value, document.getElementById("moveEndDate").value);
     }catch(err){ console.error(err); toast("Gagal menghapus Inbound: " + err.message, "bad"); }
     db.disabled = false;
+    return;
+  }
+  const dcb = e.target.closest("[data-mv-doc]");
+  if(dcb){
+    dcb.disabled = true;
+    try{
+      await editMovementDoc_(dcb.dataset.mvDoc);
+      loadMovements(document.getElementById("moveSearchSku").value, document.getElementById("moveStartDate").value, document.getElementById("moveEndDate").value);
+    }catch(err){ console.error(err); toast("Gagal mengedit No. Dokumen: " + err.message, "bad"); }
+    dcb.disabled = false;
     return;
   }
   const pb = e.target.closest("[data-mv-po]");
@@ -10447,11 +10503,13 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
     doc:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>',
     tent:'<path d="M3.5 21 14 3"/><path d="M20.5 21 10 3"/><path d="M15.5 21 12 15l-3.5 6"/><path d="M2 21h20"/>',
-    logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>'
+    logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+    rfid:'<rect x="3" y="9" width="6" height="6" rx="1"/><path d="M12.5 9a4 4 0 0 1 0 6"/><path d="M16 6a8.5 8.5 0 0 1 0 12"/><path d="M19.5 3.5a13 13 0 0 1 0 17"/>',
+    reject:'<path d="M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14"/><path d="m7.5 4.27 9 5.15"/><path d="M3.29 7 12 12l8.71-5"/><path d="M12 22V12"/><path d="m17 13 5 5m-5 0 5-5"/>'
   };
   var E={"📷":"camera","📤":"upload","🔄":"refresh","📋":"clip","🔀":"shuffle","🔎":"search","📊":"chart","📜":"history",
     "⚖":"scale","📈":"trend","🖥":"monitor","🔒":"lock","🌍":"globe","📦":"package","🏷":"tag","🔳":"qr","👥":"users","⏳":"hourglass","🎪":"tent"};
-  var NAV_ICON={navHistoryCCTF:"doc",navTransferGudang:"warehouse",navPoInbound:"inbox"}; // menu yang emoji-nya dipakai bersama: ikon dibedakan per menu
+  var NAV_ICON={navHistoryCCTF:"doc",navTransferGudang:"warehouse",navPoInbound:"inbox",navRfidMap:"rfid",navBinCL:"reject"}; // menu yang emoji-nya dipakai bersama: ikon dibedakan per menu
   var IDS={btnToggleSidebar:"panel",btnCancelSync:"stop",btnCloudSettings:"settings",btnLogout:"logout"};
   function svg(n){return '<span class="ico" data-i="'+n+'" aria-hidden="true"><svg viewBox="0 0 24 24">'+P[n]+'</svg></span>';}
 
