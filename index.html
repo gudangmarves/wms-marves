@@ -1938,6 +1938,12 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
           </div>
 
           <div class="card" style="margin: 0;">
+            <h3 class="card-header">Samakan Data ke Mapping RFID</h3>
+            <div class="hint">Bila SKU / Nama pada Mapping RFID berbeda dengan yang tersimpan di stok, <b>Data Bin Reject</b>, dan <b>Tracking Movement</b> untuk RFID yang sama, tombol ini menyamakan semuanya ke Mapping RFID (nama diambil dari Master Produk). Ada ringkasan dan konfirmasi dulu. Jumlah stok &amp; Bin tidak berubah. Dijalankan juga otomatis setelah Import Mapping.</div>
+            <div style="margin-top:12px;"><button class="btn btn-ghost" style="width:100%;" id="btnSyncRfidData">🔄 Samakan Data ke Mapping RFID</button></div>
+          </div>
+
+          <div class="card" style="margin: 0;">
             <h3 class="card-header">Cek Pemetaan</h3>
             <div class="hint" style="margin-bottom:10px;">Cari berdasarkan Kode RFID atau SKU untuk memastikan datanya sudah benar.</div>
             <input type="text" id="rfidCheckInput" class="input-sm" placeholder="🔍 Ketik Kode RFID atau SKU...">
@@ -3109,6 +3115,7 @@ document.getElementById("fileRfidMap").addEventListener("change", (e) => {
       infoEl.textContent = `✓ Berhasil impor ${list.length.toLocaleString("id-ID")} kode RFID (${skuSet.size.toLocaleString("id-ID")} SKU). File: ${file.name}`;
       toast(`✓ ${list.length.toLocaleString("id-ID")} kode RFID berhasil diimpor.`, "good");
       document.getElementById("fileRfidMap").value = "";
+      reconcileDataWithRfidMap_({ silent: true }).catch(e => console.warn("Penyamaan ke Mapping RFID gagal:", e)); // SKU/Nama baru di Mapping ikut diterapkan ke stok & log (dengan konfirmasi)
       setTimeout(() => { progEl.style.width = "0%"; }, 1500);
     }catch(err){
       console.error(err);
@@ -9253,6 +9260,83 @@ document.getElementById("btnSyncNames").onclick = async () => {
   b.disabled = true;
   try{ toast("Menyamakan nama produk di semua data...", "warning"); await reconcileNamesWithMaster_({ silent: false }); }
   catch(err){ console.error(err); toast("Gagal menyamakan nama: " + err.message, "bad"); }
+  finally{ b.disabled = false; }
+};
+
+/* ===== Penyamaan data ke Mapping RFID: Mapping RFID = acuan untuk unit ber-RFID =====
+   RFID = identitas unik 1 unit fisik. Bila Mapping RFID berbeda dengan SKU/Nama yang tersimpan pada baris stok (termasuk Data Bin Reject)
+   dan log Tracking Movement milik RFID yang sama, baris-baris itu disamakan. Nama diambil dari Master Produk (SKU target), bila SKU target
+   tidak ada di Master dipakai nama pada Mapping RFID. Perubahan SKU selalu minta konfirmasi (ada ringkasan) dan hanya untuk Admin. */
+let _rfidReconRunning = false;
+async function reconcileDataWithRfidMap_(opt){
+  opt = opt || {};
+  if(_rfidReconRunning || !idb) return null;
+  _rfidReconRunning = true;
+  const nk = (v) => String(v == null ? "" : v).replace(/[\s\u00a0\u200b]+/g, " ").trim().toUpperCase();
+  try{
+    const rmap = new Map();
+    (await idbGetAllRfid()).forEach(r => { const c = normUid_(r && r.code); if(c && r.sku) rmap.set(c, { sku: String(r.sku).trim(), nama: String(r.nama || "").trim() }); });
+    if(!rmap.size){ if(!opt.silent) toast("Tabel Mapping RFID masih kosong.", "warning"); return null; }
+    const mName = new Map(), mSku = new Map();
+    (await idbGetAllMaster()).forEach(p => { const k = nk(p && p.sku); if(!k) return; mSku.set(k, String(p.sku).trim()); const n = String(p.nama == null ? "" : p.nama).trim(); if(n) mName.set(k, n); });
+    const scans = (await idbGetAllScans()).filter(Boolean);
+    const moves = (await idbGetAllMovements()).filter(Boolean);
+    const scanById = new Map(scans.map(r => [r.id, r]));
+    const target = (uid) => {
+      const t = rmap.get(uid); if(!t) return null;
+      const k = nk(t.sku);
+      return { sku: mSku.get(k) || t.sku, nama: mName.get(k) || t.nama || "" };
+    };
+    const diffs = new Map(); // uid -> ringkasan perubahan
+    const scOut = [], mvOut = [];
+    let skuRows = 0;
+    const apply = (r, uid, kind) => {
+      const t = target(uid); if(!t) return;
+      const skuDiff = r.sku != null && r.sku !== "-" && nk(r.sku) !== nk(t.sku);
+      const namaDiff = !!t.nama && String(r.nama == null ? "" : r.nama).trim() !== t.nama;
+      if(!skuDiff && !namaDiff) return;
+      let d = diffs.get(uid);
+      if(!d){ d = { uid, fromSku: r.sku, fromNama: r.nama || "-", toSku: t.sku, toNama: t.nama || "-", skuDiff: false }; diffs.set(uid, d); }
+      if(skuDiff){ d.skuDiff = true; skuRows++; }
+      (kind === "scan" ? scOut : mvOut).push({ r, t, skuDiff, namaDiff });
+    };
+    scans.forEach(r => { const u = normUid_(r.uid); if(u) apply(r, u, "scan"); });
+    moves.forEach(r => { const u = normUid_(r.uid) || normUid_((scanById.get(r.ref_id) || {}).uid); if(u) apply(r, u, "move"); });
+    if(!scOut.length && !mvOut.length){
+      if(!opt.silent) toast("✓ Semua stok, Data Bin Reject, dan log sudah sesuai dengan Mapping RFID", "good");
+      return { scan: 0, move: 0, uid: 0 };
+    }
+    const anySku = skuRows > 0;
+    if(anySku && !isAdminNow_()){ toast("Perubahan SKU berdasarkan Mapping RFID hanya bisa dilakukan Admin.", "bad"); return null; }
+    const list = [...diffs.values()];
+    const sample = list.slice(0, 8).map(d => `• ${d.uid}: ${d.skuDiff ? `SKU ${d.fromSku} → ${d.toSku}; ` : ""}${d.fromNama} → ${d.toNama}`).join("\n");
+    const msg = `Ditemukan data yang BERBEDA dengan Mapping RFID:\n\n${list.length} RFID • stok/Data Bin Reject ${scOut.length} baris • log Tracking ${mvOut.length} baris${anySku ? `\n(termasuk perubahan SKU pada ${skuRows} baris)` : " (hanya nama)"}\n\nContoh:\n${sample}${list.length > 8 ? `\n… dan ${list.length - 8} RFID lain` : ""}\n\nSamakan semuanya ke Mapping RFID? Jumlah stok & Bin tidak berubah.`;
+    if(!opt.noConfirm && !confirm(msg)) { if(!opt.silent) toast("Dibatalkan, tidak ada data yang diubah.", "warning"); return { scan: 0, move: 0, uid: 0, cancelled: true }; }
+    const fix = (x) => {
+      if(x.skuDiff) x.r.sku = x.t.sku;
+      if(x.t.nama) x.r.nama = x.t.nama;
+      if(x.t.nama && x.r.found === false) x.r.found = true;
+      return x.r;
+    };
+    const scRows = scOut.map(fix), mvRows = mvOut.map(fix);
+    if(scRows.length) await idbAddScanBulk(scRows);
+    if(mvRows.length) await idbAddMovementBulk(mvRows);
+    await recordMovement("RFIDSYNC_" + Date.now(), "RFID_SINKRON", "-", "Sinkron Data ke Mapping RFID", "-",
+      `Samakan SKU/Nama ke Mapping RFID: ${list.length} RFID, stok ${scRows.length} baris, log ${mvRows.length} baris${anySku ? `, SKU berubah pada ${skuRows} baris` : ""}`);
+    try{ invalidateUidIndex(); }catch(e){}
+    try{ allScanCache = null; }catch(e){}
+    try{ flushSyncQueue(); }catch(e){}
+    try{ refreshCurrentTabView(); }catch(e){}
+    toast(`✓ ${list.length} RFID disamakan ke Mapping RFID (stok ${scRows.length}, log ${mvRows.length})`, "good");
+    return { scan: scRows.length, move: mvRows.length, uid: list.length };
+  } finally { _rfidReconRunning = false; }
+}
+
+document.getElementById("btnSyncRfidData").onclick = async () => {
+  const b = document.getElementById("btnSyncRfidData");
+  b.disabled = true;
+  try{ await reconcileDataWithRfidMap_({ silent: false }); }
+  catch(err){ console.error(err); toast("Gagal menyamakan data: " + err.message, "bad"); }
   finally{ b.disabled = false; }
 };
 
