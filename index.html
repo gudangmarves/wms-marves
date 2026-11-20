@@ -1605,7 +1605,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
           </div>
 
           <div class="op-toolbar">
-            <div class="pj-seg" role="tablist"><button class="on" id="pjModeOut">📤 Keluar</button><button id="pjModeIn">📥 Kembali ke Gudang</button><button id="pjModeHist">📜 Riwayat</button></div>
+            <div class="pj-seg" role="tablist"><button class="on" id="pjModeOut">📤 Keluar</button><button id="pjModeIn">📥 Kembali ke Gudang</button></div>
             <div class="toolbar-spacer"></div>
             <button class="btn btn-ghost btn-sm" id="pjRefresh" title="Muat ulang">🔄</button>
             <button class="btn btn-ghost btn-sm" id="pjExport" title="Export Excel">⬇️ Export</button>
@@ -1626,7 +1626,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
 
           <div class="op-toolbar" style="margin-top:8px;">
             <input type="text" id="pjSearch" class="input-sm toolbar-search" placeholder="🔍 Cari peminjam / SKU / RFID / bin...">
-            <div class="ma-chips pj-chipbar" role="group"><button class="ma-chip on" data-pjc="all">Semua</button><button class="ma-chip" data-pjc="PINJAM">🤝 Pinjam</button><button class="ma-chip" data-pjc="BAZAR">🎪 Bazar</button><button class="ma-chip" data-pjc="LATE">⚠ Lewat tempo</button><button class="ma-chip" data-pjc="OPEN" id="pjChipOpen" style="display:none;">📤 Masih keluar</button><button class="ma-chip" data-pjc="DONE" id="pjChipDone" style="display:none;">✅ Sudah kembali</button></div>
+            <div class="ma-chips pj-chipbar" role="group"><button class="ma-chip on" data-pjc="all">Semua</button><button class="ma-chip" data-pjc="PINJAM">🤝 Pinjam</button><button class="ma-chip" data-pjc="BAZAR">🎪 Bazar</button><button class="ma-chip" data-pjc="LATE">⚠ Lewat tempo</button></div>
             <div class="toolbar-spacer"></div>
             <span class="toolbar-count" id="pjInfo"></span>
           </div>
@@ -9991,26 +9991,26 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   const durTxt = r => { const a = new Date(r.ts), b = r.retTs ? new Date(r.retTs) : new Date(); if (isNaN(a) || isNaN(b)) return "-"; const d = Math.floor((b - a) / 86400000); return d < 1 ? "<1 hari" : d + " hari"; };
   function visibleHist() {
     const q = ($("pjSearch").value || "").trim().toLowerCase();
-    return hist.filter(r => (chip === "all" || (chip === "OPEN" || chip === "DONE" ? r.status === chip : r.type === chip)) && (!q || [r.who, r.sku, r.nama, r.uid, r.bin, r.note].join(" ").toLowerCase().includes(q)));
+    return hist.filter(r => r.status === "DONE" && (chip === "all" || r.type === chip) && (!q || [r.who, r.sku, r.nama, r.uid, r.bin, r.note].join(" ").toLowerCase().includes(q)));
   }
   function renderHist() {
     const rows = visibleHist();
     $("pjStatAll").textContent = hist.filter(r => r.status === "OPEN").length;
-    $("pjStatPinjam").textContent = hist.filter(r => r.type === "PINJAM").length;
-    $("pjStatBazar").textContent = hist.filter(r => r.type === "BAZAR").length;
+    $("pjStatPinjam").textContent = hist.filter(r => r.status === "DONE" && r.type === "PINJAM").length;
+    $("pjStatBazar").textContent = hist.filter(r => r.status === "DONE" && r.type === "BAZAR").length;
     $("pjStatLate").textContent = hist.filter(r => r.status === "DONE").length;
-    $("pjInfo").textContent = rows.length + " riwayat ditampilkan";
+    $("pjInfo").textContent = rows.length + " unit sudah kembali";
     $("pjBody").innerHTML = rows.length ? rows.map(r => {
       const done = r.status === "DONE";
       return `<tr><td>${escUid_(fmtD(r.ts))}</td><td class="c"><span class="badge ${r.type === "BAZAR" ? "transfer" : "warning"}">${r.type}</span></td><td style="font-weight:700;">${escUid_(r.who || "-")}</td><td><b style="font-family:var(--font-mono);">${escUid_(r.sku || "")}</b><br><span class="hint">${escUid_(r.nama || "")}</span></td><td style="font-family:var(--font-mono);">${escUid_(r.uid || "-")}</td><td class="c">${escUid_(r.bin || "-")}</td><td>${done ? escUid_(fmtD(r.retTs)) + (r.retBy ? '<br><span class="hint">oleh ' + escUid_(r.retBy) + "</span>" : "") : "-"}</td><td class="c">${escUid_(durTxt(r))}</td><td class="c"><span class="badge ${done ? "good" : "warning"}">${done ? "Sudah kembali" : "Masih keluar"}</span></td><td>${escUid_(r.note || "")}</td></tr>`;
-    }).join("") : `<tr><td colspan="10"><div class="pj-empty"><div class="big">📜</div><b>Belum ada riwayat</b><div class="hint">Riwayat muncul setelah ada barang yang dipinjam / dibazarkan.</div></div></td></tr>`;
+    }).join("") : `<tr><td colspan="10"><div class="pj-empty"><div class="big">📜</div><b>Belum ada barang yang dikembalikan</b><div class="hint">Scan RFID barang yang kembali. Setelah masuk gudang, barang tampil di sini sebagai riwayat.</div></div></td></tr>`;
   }
   function visible() {
     const q = ($("pjSearch").value || "").trim().toLowerCase();
     return list.filter(r => (chip === "all" || (chip === "LATE" ? (r.est && r.est < today()) : r.type === chip)) && (!q || [r.who, r.sku, r.nama, r.uid, r.bin, r.note].join(" ").toLowerCase().includes(q)));
   }
   function render() {
-    if (mode === "hist") return renderHist();
+    if (mode === "in") return renderHist();
     const rows = visible(), t = today();
     const nLate = list.filter(r => r.est && r.est < t).length;
     $("pjStatAll").textContent = list.length; $("pjStatPinjam").textContent = list.filter(r => r.type === "PINJAM").length;
@@ -10058,21 +10058,18 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   $("pjScan").addEventListener("keydown", e => { if (e.key !== "Enter") return; const v = $("pjScan").value.trim(); $("pjScan").value = ""; if (v) onScan(v); });
   $("pjSearch").addEventListener("input", render);
   document.querySelectorAll("[data-pjc]").forEach(b => b.onclick = () => { chip = b.dataset.pjc; document.querySelectorAll("[data-pjc]").forEach(x => x.classList.toggle("on", x === b)); render(); });
-  const setMode = m => { const wasHist = mode === "hist"; mode = m; const h = m === "hist";
-    $("pjModeOut").classList.toggle("on", m === "out"); $("pjModeIn").classList.toggle("on", m === "in"); $("pjModeHist").classList.toggle("on", h);
+  const setMode = m => { const wasHist = mode === "in"; mode = m; const h = m === "in";
+    $("pjModeOut").classList.toggle("on", m === "out"); $("pjModeIn").classList.toggle("on", m === "in");
     $("pjFormOut").style.display = m === "out" ? "" : "none"; $("pjResult").innerHTML = "";
-    document.querySelector("#tab-pinjam .op-scanbar").style.display = h ? "none" : "";
-    $("pjHead").innerHTML = h ? HEAD_HIST : HEAD_OPEN;
-    $("pjStatLate").nextElementSibling.textContent = h ? "Sudah Kembali" : "Lewat Tempo"; $("pjStatPinjam").nextElementSibling.textContent = h ? "Total Pinjam" : "Pinjam"; $("pjStatBazar").nextElementSibling.textContent = h ? "Total Bazar" : "Bazar";
-    $("pjChipOpen").style.display = h ? "" : "none"; $("pjChipDone").style.display = h ? "" : "none";
+    $("pjHead").innerHTML = h ? HEAD_HIST : HEAD_OPEN; const lc = document.querySelector("[data-pjc=LATE]"); if (lc) lc.style.display = h ? "none" : "";
+    $("pjStatLate").nextElementSibling.textContent = h ? "Total Kembali" : "Lewat Tempo"; $("pjStatPinjam").nextElementSibling.textContent = h ? "Kembali Pinjam" : "Pinjam"; $("pjStatBazar").nextElementSibling.textContent = h ? "Kembali Bazar" : "Bazar";
     if (h !== wasHist) { chip = "all"; document.querySelectorAll("[data-pjc]").forEach(x => x.classList.toggle("on", x.dataset.pjc === "all")); }
-    if (h) { $("pjHint").textContent = "Riwayat semua peminjaman / bazar, termasuk yang sudah kembali ke gudang."; render(); return; }
     render();
-    $("pjHint").textContent = m === "out" ? "Catat barang yang dipinjam atau dibawa ke bazar. Stok otomatis keluar dari gudang." : "Scan RFID barang yang kembali. Otomatis masuk lagi ke bin asal dan tercatat di Riwayat.";
+    $("pjHint").textContent = m === "out" ? "Catat barang yang dipinjam atau dibawa ke bazar. Stok otomatis keluar dari gudang." : "Scan RFID barang yang kembali. Otomatis masuk lagi ke bin asal. Daftar di bawah = barang yang sudah kembali.";
     $("pjScan").placeholder = m === "out" ? "🔫 Tembak barcode / QR RFID lalu Enter..." : "🔫 Scan RFID barang yang KEMBALI lalu Enter..."; $("pjScan").focus(); };
   $("pjType").onchange = () => { const b = $("pjType").value === "BAZAR"; $("pjWhoLbl").innerHTML = (b ? "Nama bazar / event" : "Nama peminjam") + ' <b style="color:var(--danger);">*</b>'; $("pjWho").placeholder = b ? "mis. Bazar Mall Kokas 20-22 Nov" : "mis. Tim Marketing - Rina"; };
   $("pjRefresh").onclick = refresh;
-  $("pjModeOut").onclick = () => setMode("out"); $("pjModeIn").onclick = () => setMode("in"); $("pjModeHist").onclick = () => setMode("hist");
+  $("pjModeOut").onclick = () => setMode("out"); $("pjModeIn").onclick = () => setMode("in"); 
   function openEdit(r) {
     const ov = document.createElement("div");
     ov.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:9999; display:flex; align-items:center; justify-content:center; padding:16px;";
@@ -10103,9 +10100,9 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     const ed = e.target.closest("[data-pjedit]");
     if (ed) { const r = list.find(x => x.ref_id === ed.dataset.pjedit); if (r) openEdit(r); return; }
   });
-  $("pjExport").onclick = () => { if (mode === "hist") { const hr = visibleHist(); if (!hr.length) { toast("Tidak ada data untuk di-export", "bad"); return; }
+  $("pjExport").onclick = () => { if (mode === "in") { const hr = visibleHist(); if (!hr.length) { toast("Tidak ada data untuk di-export", "bad"); return; }
       const ws2 = XLSX.utils.json_to_sheet(hr.map(r => ({ "Tgl Keluar": fmtD(r.ts), "Tipe": r.type, "Peminjam/Bazar": r.who, "SKU": r.sku, "Nama Barang": r.nama, "RFID": r.uid || "", "Bin": r.bin, "Est. Kembali": r.est, "Status": r.status === "DONE" ? "Sudah kembali" : "Masih keluar", "Tgl Kembali": r.retTs ? fmtD(r.retTs) : "", "Dikembalikan Oleh": r.retBy || "", "Durasi": durTxt(r), "Catatan": r.note, "Dicatat Oleh": r.by || "" })));
-      const wb2 = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb2, ws2, "Riwayat"); XLSX.writeFile(wb2, "Riwayat_Pinjam_Bazar_" + today() + ".xlsx"); return; }
+      const wb2 = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb2, ws2, "Sudah Kembali"); XLSX.writeFile(wb2, "Kembali_Gudang_" + today() + ".xlsx"); return; }
     const rows = visible(); if (!rows.length) { toast("Tidak ada data untuk di-export", "bad"); return; }
     const ws = XLSX.utils.json_to_sheet(rows.map(r => ({ "Tgl Keluar": fmtD(r.ts), "Tipe": r.type, "Peminjam/Bazar": r.who, "SKU": r.sku, "Nama Barang": r.nama, "RFID": r.uid || "", "Bin Asal": r.bin, "Est. Kembali": r.est, "Catatan": r.note, "Dicatat Oleh": r.by || "" })));
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Pinjam-Bazar"); XLSX.writeFile(wb, "Peminjaman_Bazar_" + today() + ".xlsx"); };
