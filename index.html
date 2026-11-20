@@ -7855,13 +7855,21 @@ function renderPoRecap_(rows){
   const tsel = tp ? tdPo - tp : null, tpct = tp ? Math.round(tdPo / tp * 1000) / 10 : null;
   tb.innerHTML = html + `<tr style="font-weight:800; background:var(--bg-input);"><td colspan="2">TOTAL</td><td style="text-align:center;">${tr}</td><td style="text-align:center;">${ti}</td><td style="text-align:center;">${tp || "-"}</td><td style="text-align:center;">${tsel === null ? "-" : tsel}</td><td style="text-align:center;">${tpct === null ? "-" : tpct.toFixed(1) + "%"}</td><td></td>${adm ? "<td></td>" : ""}</tr>`;
 }
+let _poLoadSeq = 0;
 async function loadPoInbound(){
   const tb = document.getElementById("poRecapBody");
-  tb.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center;">Memuat...</td></tr>';
+  const sc = tb.closest(".scroll-table"); let pageEl = tb.parentElement; while(pageEl && !(pageEl.scrollHeight > pageEl.clientHeight && /(auto|scroll)/.test(getComputedStyle(pageEl).overflowY))) pageEl = pageEl.parentElement;
+  const keepTop = sc ? sc.scrollTop : 0, keepPage = pageEl ? pageEl.scrollTop : 0;
+  const seq = ++_poLoadSeq;
+  // Refresh senyap: bila tabel sudah berisi, jangan dikosongkan ke "Memuat..." (itulah yang bikin tampilan menutup lalu kembali ke atas)
+  if(!poRecapCache.length) tb.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center;">Memuat...</td></tr>';
   try{
     const [moves, scans] = await Promise.all([idbGetAllMovements(), idbGetAllScans()]);
+    if(seq !== _poLoadSeq) return;
     poRecapCache = computePoRecap_(moves.filter(m => m && !m.reverted), scans);
     renderPoRecap_(poRecapCache);
+    if(sc) sc.scrollTop = keepTop;
+    if(pageEl) pageEl.scrollTop = keepPage;
   }catch(err){ console.error(err); tb.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; color:red;">Gagal memuat: ' + escUid_(err.message) + '</td></tr>'; }
 }
 function poParse_(rows){
