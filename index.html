@@ -2147,8 +2147,8 @@ function curBy_(){ const u = curUser_(); return (u && u.name) ? u.name : ""; }
 const SEED_USERS = [
   /*SEED_USERS_BEGIN*/
   { name: "Indra", hash: "ed02f388ce4125b8e35f9d79a4fba9150a68f742b17256f3e10152d87b38f140", pw: "surya1212", role: "operator" },
-  { name: "Outbound", hash: "526df9cdae29912d6c17a36b236947ba933fd434bce6e45a1614fc371c45ab89", pw: "teamoutbound", role: "outbound" },
-  { name: "admin", hash: "821bae8ac928b9568087361322a0185847944bb1663c4d7eb0fa532ec974e88f", pw: "Marves2525", role: "admin" },
+  { name: "Outbound", hash: "526df9cdae29912d6c17a36b236947ba933fd434bce6e45a1614fc371c45ab89", pw: "34tQDP6G", role: "outbound" },
+  { name: "admin", hash: "821bae8ac928b9568087361322a0185847944bb1663c4d7eb0fa532ec974e88f", role: "admin" },
   /*SEED_USERS_END*/
 ];
 function getUsers_(){
@@ -10018,7 +10018,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     $("pjInfo").textContent = rows.length + " unit ditampilkan";
     $("pjBody").innerHTML = rows.length ? rows.map((r, i) => {
       const late = r.est && r.est < t;
-      return `<tr${late ? ' class="pj-late"' : ""}><td>${escUid_(fmtD(r.ts))}</td><td class="c"><span class="badge ${r.type === "BAZAR" ? "transfer" : "warning"}">${r.type}</span></td><td style="font-weight:700;">${escUid_(r.who || "-")}</td><td><b style="font-family:var(--font-mono);">${escUid_(r.sku || "")}</b><br><span class="hint">${escUid_(r.nama || "")}</span></td><td style="font-family:var(--font-mono);">${escUid_(r.uid || "-")}</td><td class="c">${escUid_(r.bin || "-")}</td><td class="c">${r.est ? escUid_(r.est) : "-"}${late ? ' <span class="badge bad">lewat</span>' : ""}</td><td>${escUid_(r.note || "")}</td><td class="c" style="white-space:nowrap;"><button class="btn btn-ghost btn-sm" data-pjedit="${escUid_(r.ref_id)}" title="Edit jenis / nama / estimasi / catatan">✏️ Edit</button> <button class="btn btn-accent btn-sm" data-pjret="${escUid_(r.ref_id)}">↩ Kembalikan</button></td></tr>`;
+      return `<tr${late ? ' class="pj-late"' : ""}><td>${escUid_(fmtD(r.ts))}</td><td class="c"><span class="badge ${r.type === "BAZAR" ? "transfer" : "warning"}">${r.type}</span></td><td style="font-weight:700;">${escUid_(r.who || "-")}</td><td><b style="font-family:var(--font-mono);">${escUid_(r.sku || "")}</b><br><span class="hint">${escUid_(r.nama || "")}</span></td><td style="font-family:var(--font-mono);">${escUid_(r.uid || "-")}</td><td class="c">${escUid_(r.bin || "-")}</td><td class="c">${r.est ? escUid_(r.est) : "-"}${late ? ' <span class="badge bad">lewat</span>' : ""}</td><td>${escUid_(r.note || "")}</td><td class="c" style="white-space:nowrap;"><button class="btn btn-ghost btn-sm" data-pjedit="${escUid_(r.ref_id)}" title="Edit jenis / nama / estimasi / catatan">✏️ Edit</button></td></tr>`;
     }).join("") : `<tr><td colspan="9"><div class="pj-empty"><div class="big">🎪</div><b>Belum ada barang yang sedang keluar</b><div class="hint">Isi form di atas lalu scan RFID untuk mencatat peminjaman atau barang bazar.</div></div></td></tr>`;
   }
   async function refresh() { try { list = await loadOpen(); } catch (e) { list = []; console.warn(e); } try { hist = await loadHistory(); } catch (e) { hist = []; console.warn(e); } render(); }
@@ -10068,7 +10068,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     if (h !== wasHist) { chip = "all"; document.querySelectorAll("[data-pjc]").forEach(x => x.classList.toggle("on", x.dataset.pjc === "all")); }
     if (h) { $("pjHint").textContent = "Riwayat semua peminjaman / bazar, termasuk yang sudah kembali ke gudang."; render(); return; }
     render();
-    $("pjHint").textContent = m === "out" ? "Catat barang yang dipinjam atau dibawa ke bazar. Stok otomatis keluar dari gudang." : "Scan RFID barang yang kembali, atau klik Kembalikan di tabel. Unit masuk lagi ke bin asal.";
+    $("pjHint").textContent = m === "out" ? "Catat barang yang dipinjam atau dibawa ke bazar. Stok otomatis keluar dari gudang." : "Scan RFID barang yang kembali. Otomatis masuk lagi ke bin asal dan tercatat di Riwayat.";
     $("pjScan").placeholder = m === "out" ? "🔫 Tembak barcode / QR RFID lalu Enter..." : "🔫 Scan RFID barang yang KEMBALI lalu Enter..."; $("pjScan").focus(); };
   $("pjType").onchange = () => { const b = $("pjType").value === "BAZAR"; $("pjWhoLbl").innerHTML = (b ? "Nama bazar / event" : "Nama peminjam") + ' <b style="color:var(--danger);">*</b>'; $("pjWho").placeholder = b ? "mis. Bazar Mall Kokas 20-22 Nov" : "mis. Tim Marketing - Rina"; };
   $("pjRefresh").onclick = refresh;
@@ -10102,9 +10102,6 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   $("pjBody").addEventListener("click", async e => {
     const ed = e.target.closest("[data-pjedit]");
     if (ed) { const r = list.find(x => x.ref_id === ed.dataset.pjedit); if (r) openEdit(r); return; }
-    const b = e.target.closest("[data-pjret]"); if (!b) return;
-    const r = list.find(x => x.ref_id === b.dataset.pjret);
-    if (r && confirm(`Kembalikan ${r.sku}${r.uid ? " (" + r.uid + ")" : ""} dari ${r.who} ke Bin ${r.bin || "-"}?`) && await giveBack(r)) await refresh();
   });
   $("pjExport").onclick = () => { if (mode === "hist") { const hr = visibleHist(); if (!hr.length) { toast("Tidak ada data untuk di-export", "bad"); return; }
       const ws2 = XLSX.utils.json_to_sheet(hr.map(r => ({ "Tgl Keluar": fmtD(r.ts), "Tipe": r.type, "Peminjam/Bazar": r.who, "SKU": r.sku, "Nama Barang": r.nama, "RFID": r.uid || "", "Bin": r.bin, "Est. Kembali": r.est, "Status": r.status === "DONE" ? "Sudah kembali" : "Masih keluar", "Tgl Kembali": r.retTs ? fmtD(r.retTs) : "", "Dikembalikan Oleh": r.retBy || "", "Durasi": durTxt(r), "Catatan": r.note, "Dicatat Oleh": r.by || "" })));
