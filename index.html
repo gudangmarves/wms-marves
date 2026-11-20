@@ -1605,7 +1605,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
           </div>
 
           <div class="op-toolbar">
-            <div class="pj-seg" role="tablist"><button class="on" id="pjModeOut">📤 Keluar</button><button id="pjModeIn">📥 Kembali ke Gudang</button></div>
+            <div class="pj-seg" role="tablist"><button class="on" id="pjModeOut">📤 Keluar</button><button id="pjModeIn">📥 Kembali ke Gudang</button><button id="pjModeHist">📜 Riwayat</button></div>
             <div class="toolbar-spacer"></div>
             <button class="btn btn-ghost btn-sm" id="pjRefresh" title="Muat ulang">🔄</button>
             <button class="btn btn-ghost btn-sm" id="pjExport" title="Export Excel">⬇️ Export</button>
@@ -1626,13 +1626,13 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
 
           <div class="op-toolbar" style="margin-top:8px;">
             <input type="text" id="pjSearch" class="input-sm toolbar-search" placeholder="🔍 Cari peminjam / SKU / RFID / bin...">
-            <div class="ma-chips pj-chipbar" role="group"><button class="ma-chip on" data-pjc="all">Semua</button><button class="ma-chip" data-pjc="PINJAM">🤝 Pinjam</button><button class="ma-chip" data-pjc="BAZAR">🎪 Bazar</button><button class="ma-chip" data-pjc="LATE">⚠ Lewat tempo</button></div>
+            <div class="ma-chips pj-chipbar" role="group"><button class="ma-chip on" data-pjc="all">Semua</button><button class="ma-chip" data-pjc="PINJAM">🤝 Pinjam</button><button class="ma-chip" data-pjc="BAZAR">🎪 Bazar</button><button class="ma-chip" data-pjc="LATE">⚠ Lewat tempo</button><button class="ma-chip" data-pjc="OPEN" id="pjChipOpen" style="display:none;">📤 Masih keluar</button><button class="ma-chip" data-pjc="DONE" id="pjChipDone" style="display:none;">✅ Sudah kembali</button></div>
             <div class="toolbar-spacer"></div>
             <span class="toolbar-count" id="pjInfo"></span>
           </div>
 
           <div class="scroll-table fill"><table class="op-table">
-            <thead><tr><th>Keluar</th><th class="c">Jenis</th><th>Peminjam / Bazar</th><th>SKU / Nama Barang</th><th>RFID</th><th class="c">Bin Asal</th><th class="c">Est. Kembali</th><th>Catatan</th><th class="c">Aksi</th></tr></thead>
+            <thead id="pjHead"><tr><th>Keluar</th><th class="c">Jenis</th><th>Peminjam / Bazar</th><th>SKU / Nama Barang</th><th>RFID</th><th class="c">Bin Asal</th><th class="c">Est. Kembali</th><th>Catatan</th><th class="c">Aksi</th></tr></thead>
             <tbody id="pjBody"><tr><td colspan="9" class="hint" style="text-align:center; padding:24px;">Memuat...</td></tr></tbody>
           </table></div>
         </div>
@@ -9964,7 +9964,9 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
    Status dihitung dari Tracking Movement (PINJAM/BAZAR = keluar, KEMBALI_PINJAM = kembali), jadi ikut tersinkron ke cloud. */
 (function initPinjam_(){
   const $ = id => document.getElementById(id);
-  let mode = "out", chip = "all", list = [];
+  let mode = "out", chip = "all", list = [], hist = [];
+  const HEAD_OPEN = $("pjHead").innerHTML;
+  const HEAD_HIST = "<tr><th>Keluar</th><th class=\"c\">Jenis</th><th>Peminjam / Bazar</th><th>SKU / Nama Barang</th><th>RFID</th><th class=\"c\">Bin</th><th>Kembali</th><th class=\"c\">Durasi</th><th class=\"c\">Status</th><th>Catatan</th></tr>";
   const parseRm = rm => { const m = /^\[(PINJAM|BAZAR)\]\s*(.*?)\s*\|\s*Est:\s*([0-9-]*)\s*\|\s*([\s\S]*)$/.exec(rm || ""); return m ? { who: m[2], est: m[3], note: m[4] === "-" ? "" : m[4] } : { who: "", est: "", note: rm || "" }; };
   const fmtD = iso => { try { return new Date(iso).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" }); } catch (e) { return iso || "-"; } };
   const today = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
@@ -9975,11 +9977,40 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     mv.forEach(m => { if (m.type === "KEMBALI_PINJAM") open.delete(m.ref_id); else open.set(m.ref_id, Object.assign({}, m, parseRm(m.remark))); });
     return Array.from(open.values()).sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
   }
+  async function loadHistory() {
+    const mv = (await idbGetAllMovements()).filter(m => m && (m.type === "PINJAM" || m.type === "BAZAR" || m.type === "KEMBALI_PINJAM")).sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+    const cur = new Map(), out = [];
+    mv.forEach(m => {
+      if (m.type === "KEMBALI_PINJAM") { const c = cur.get(m.ref_id); if (c) { c.retTs = m.ts; c.retBy = m.by || ""; c.status = "DONE"; cur.delete(m.ref_id); } return; }
+      const prev = cur.get(m.ref_id), rec = Object.assign({}, m, parseRm(m.remark), { status: "OPEN", retTs: "", retBy: "" });
+      if (prev) { const i = out.indexOf(prev); if (i >= 0) out.splice(i, 1); }
+      cur.set(m.ref_id, rec); out.push(rec);
+    });
+    return out.sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
+  }
+  const durTxt = r => { const a = new Date(r.ts), b = r.retTs ? new Date(r.retTs) : new Date(); if (isNaN(a) || isNaN(b)) return "-"; const d = Math.floor((b - a) / 86400000); return d < 1 ? "<1 hari" : d + " hari"; };
+  function visibleHist() {
+    const q = ($("pjSearch").value || "").trim().toLowerCase();
+    return hist.filter(r => (chip === "all" || (chip === "OPEN" || chip === "DONE" ? r.status === chip : r.type === chip)) && (!q || [r.who, r.sku, r.nama, r.uid, r.bin, r.note].join(" ").toLowerCase().includes(q)));
+  }
+  function renderHist() {
+    const rows = visibleHist();
+    $("pjStatAll").textContent = hist.filter(r => r.status === "OPEN").length;
+    $("pjStatPinjam").textContent = hist.filter(r => r.type === "PINJAM").length;
+    $("pjStatBazar").textContent = hist.filter(r => r.type === "BAZAR").length;
+    $("pjStatLate").textContent = hist.filter(r => r.status === "DONE").length;
+    $("pjInfo").textContent = rows.length + " riwayat ditampilkan";
+    $("pjBody").innerHTML = rows.length ? rows.map(r => {
+      const done = r.status === "DONE";
+      return `<tr><td>${escUid_(fmtD(r.ts))}</td><td class="c"><span class="badge ${r.type === "BAZAR" ? "transfer" : "warning"}">${r.type}</span></td><td style="font-weight:700;">${escUid_(r.who || "-")}</td><td><b style="font-family:var(--font-mono);">${escUid_(r.sku || "")}</b><br><span class="hint">${escUid_(r.nama || "")}</span></td><td style="font-family:var(--font-mono);">${escUid_(r.uid || "-")}</td><td class="c">${escUid_(r.bin || "-")}</td><td>${done ? escUid_(fmtD(r.retTs)) + (r.retBy ? '<br><span class="hint">oleh ' + escUid_(r.retBy) + "</span>" : "") : "-"}</td><td class="c">${escUid_(durTxt(r))}</td><td class="c"><span class="badge ${done ? "good" : "warning"}">${done ? "Sudah kembali" : "Masih keluar"}</span></td><td>${escUid_(r.note || "")}</td></tr>`;
+    }).join("") : `<tr><td colspan="10"><div class="pj-empty"><div class="big">📜</div><b>Belum ada riwayat</b><div class="hint">Riwayat muncul setelah ada barang yang dipinjam / dibazarkan.</div></div></td></tr>`;
+  }
   function visible() {
     const q = ($("pjSearch").value || "").trim().toLowerCase();
     return list.filter(r => (chip === "all" || (chip === "LATE" ? (r.est && r.est < today()) : r.type === chip)) && (!q || [r.who, r.sku, r.nama, r.uid, r.bin, r.note].join(" ").toLowerCase().includes(q)));
   }
   function render() {
+    if (mode === "hist") return renderHist();
     const rows = visible(), t = today();
     const nLate = list.filter(r => r.est && r.est < t).length;
     $("pjStatAll").textContent = list.length; $("pjStatPinjam").textContent = list.filter(r => r.type === "PINJAM").length;
@@ -9990,7 +10021,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       return `<tr${late ? ' class="pj-late"' : ""}><td>${escUid_(fmtD(r.ts))}</td><td class="c"><span class="badge ${r.type === "BAZAR" ? "transfer" : "warning"}">${r.type}</span></td><td style="font-weight:700;">${escUid_(r.who || "-")}</td><td><b style="font-family:var(--font-mono);">${escUid_(r.sku || "")}</b><br><span class="hint">${escUid_(r.nama || "")}</span></td><td style="font-family:var(--font-mono);">${escUid_(r.uid || "-")}</td><td class="c">${escUid_(r.bin || "-")}</td><td class="c">${r.est ? escUid_(r.est) : "-"}${late ? ' <span class="badge bad">lewat</span>' : ""}</td><td>${escUid_(r.note || "")}</td><td class="c" style="white-space:nowrap;"><button class="btn btn-ghost btn-sm" data-pjedit="${escUid_(r.ref_id)}" title="Edit jenis / nama / estimasi / catatan">✏️ Edit</button> <button class="btn btn-accent btn-sm" data-pjret="${escUid_(r.ref_id)}">↩ Kembalikan</button></td></tr>`;
     }).join("") : `<tr><td colspan="9"><div class="pj-empty"><div class="big">🎪</div><b>Belum ada barang yang sedang keluar</b><div class="hint">Isi form di atas lalu scan RFID untuk mencatat peminjaman atau barang bazar.</div></div></td></tr>`;
   }
-  async function refresh() { try { list = await loadOpen(); } catch (e) { list = []; console.warn(e); } render(); }
+  async function refresh() { try { list = await loadOpen(); } catch (e) { list = []; console.warn(e); } try { hist = await loadHistory(); } catch (e) { hist = []; console.warn(e); } render(); }
   window.pinjamRefresh_ = refresh;
 
   async function giveBack(r) {
@@ -10027,12 +10058,21 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   $("pjScan").addEventListener("keydown", e => { if (e.key !== "Enter") return; const v = $("pjScan").value.trim(); $("pjScan").value = ""; if (v) onScan(v); });
   $("pjSearch").addEventListener("input", render);
   document.querySelectorAll("[data-pjc]").forEach(b => b.onclick = () => { chip = b.dataset.pjc; document.querySelectorAll("[data-pjc]").forEach(x => x.classList.toggle("on", x === b)); render(); });
-  const setMode = m => { mode = m; $("pjModeOut").classList.toggle("on", m === "out"); $("pjModeIn").classList.toggle("on", m === "in"); $("pjFormOut").style.display = m === "out" ? "" : "none"; $("pjResult").innerHTML = "";
+  const setMode = m => { const wasHist = mode === "hist"; mode = m; const h = m === "hist";
+    $("pjModeOut").classList.toggle("on", m === "out"); $("pjModeIn").classList.toggle("on", m === "in"); $("pjModeHist").classList.toggle("on", h);
+    $("pjFormOut").style.display = m === "out" ? "" : "none"; $("pjResult").innerHTML = "";
+    document.querySelector("#tab-pinjam .op-scanbar").style.display = h ? "none" : "";
+    $("pjHead").innerHTML = h ? HEAD_HIST : HEAD_OPEN;
+    $("pjStatLate").nextElementSibling.textContent = h ? "Sudah Kembali" : "Lewat Tempo"; $("pjStatPinjam").nextElementSibling.textContent = h ? "Total Pinjam" : "Pinjam"; $("pjStatBazar").nextElementSibling.textContent = h ? "Total Bazar" : "Bazar";
+    $("pjChipOpen").style.display = h ? "" : "none"; $("pjChipDone").style.display = h ? "" : "none";
+    if (h !== wasHist) { chip = "all"; document.querySelectorAll("[data-pjc]").forEach(x => x.classList.toggle("on", x.dataset.pjc === "all")); }
+    if (h) { $("pjHint").textContent = "Riwayat semua peminjaman / bazar, termasuk yang sudah kembali ke gudang."; render(); return; }
+    render();
     $("pjHint").textContent = m === "out" ? "Catat barang yang dipinjam atau dibawa ke bazar. Stok otomatis keluar dari gudang." : "Scan RFID barang yang kembali, atau klik Kembalikan di tabel. Unit masuk lagi ke bin asal.";
     $("pjScan").placeholder = m === "out" ? "🔫 Tembak barcode / QR RFID lalu Enter..." : "🔫 Scan RFID barang yang KEMBALI lalu Enter..."; $("pjScan").focus(); };
   $("pjType").onchange = () => { const b = $("pjType").value === "BAZAR"; $("pjWhoLbl").innerHTML = (b ? "Nama bazar / event" : "Nama peminjam") + ' <b style="color:var(--danger);">*</b>'; $("pjWho").placeholder = b ? "mis. Bazar Mall Kokas 20-22 Nov" : "mis. Tim Marketing - Rina"; };
   $("pjRefresh").onclick = refresh;
-  $("pjModeOut").onclick = () => setMode("out"); $("pjModeIn").onclick = () => setMode("in");
+  $("pjModeOut").onclick = () => setMode("out"); $("pjModeIn").onclick = () => setMode("in"); $("pjModeHist").onclick = () => setMode("hist");
   function openEdit(r) {
     const ov = document.createElement("div");
     ov.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:9999; display:flex; align-items:center; justify-content:center; padding:16px;";
@@ -10066,7 +10106,10 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     const r = list.find(x => x.ref_id === b.dataset.pjret);
     if (r && confirm(`Kembalikan ${r.sku}${r.uid ? " (" + r.uid + ")" : ""} dari ${r.who} ke Bin ${r.bin || "-"}?`) && await giveBack(r)) await refresh();
   });
-  $("pjExport").onclick = () => { const rows = visible(); if (!rows.length) { toast("Tidak ada data untuk di-export", "bad"); return; }
+  $("pjExport").onclick = () => { if (mode === "hist") { const hr = visibleHist(); if (!hr.length) { toast("Tidak ada data untuk di-export", "bad"); return; }
+      const ws2 = XLSX.utils.json_to_sheet(hr.map(r => ({ "Tgl Keluar": fmtD(r.ts), "Tipe": r.type, "Peminjam/Bazar": r.who, "SKU": r.sku, "Nama Barang": r.nama, "RFID": r.uid || "", "Bin": r.bin, "Est. Kembali": r.est, "Status": r.status === "DONE" ? "Sudah kembali" : "Masih keluar", "Tgl Kembali": r.retTs ? fmtD(r.retTs) : "", "Dikembalikan Oleh": r.retBy || "", "Durasi": durTxt(r), "Catatan": r.note, "Dicatat Oleh": r.by || "" })));
+      const wb2 = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb2, ws2, "Riwayat"); XLSX.writeFile(wb2, "Riwayat_Pinjam_Bazar_" + today() + ".xlsx"); return; }
+    const rows = visible(); if (!rows.length) { toast("Tidak ada data untuk di-export", "bad"); return; }
     const ws = XLSX.utils.json_to_sheet(rows.map(r => ({ "Tgl Keluar": fmtD(r.ts), "Tipe": r.type, "Peminjam/Bazar": r.who, "SKU": r.sku, "Nama Barang": r.nama, "RFID": r.uid || "", "Bin Asal": r.bin, "Est. Kembali": r.est, "Catatan": r.note, "Dicatat Oleh": r.by || "" })));
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Pinjam-Bazar"); XLSX.writeFile(wb, "Peminjaman_Bazar_" + today() + ".xlsx"); };
   $("navPinjam").onclick = () => switchTab("pinjam");
