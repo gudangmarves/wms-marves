@@ -1941,7 +1941,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
           <div class="card" style="margin: 0;">
             <h3 class="card-header">Samakan Data ke Mapping RFID</h3>
             <div class="hint">Bila SKU / Nama pada Mapping RFID berbeda dengan yang tersimpan di stok, <b>Data Bin Reject</b>, dan <b>Tracking Movement</b> untuk RFID yang sama, tombol ini menyamakan semuanya ke Mapping RFID (nama diambil dari Master Produk). Ada ringkasan dan konfirmasi dulu. Jumlah stok &amp; Bin tidak berubah. Dijalankan juga otomatis setelah Import Mapping.</div>
-            <div style="margin-top:12px;"><button class="btn btn-ghost" style="width:100%;" id="btnSyncRfidData">🔄 Samakan Data ke Mapping RFID</button></div>
+            <div style="margin-top:12px; display:flex; gap:8px;"><button class="btn btn-ghost" style="flex:1;" id="btnSyncRfidData">🔄 Samakan Data ke Mapping RFID</button><button class="btn btn-ghost" id="btnDlRfidDiff" title="Unduh Excel daftar data yang berbeda dengan Mapping RFID, tanpa mengubah apa pun">⬇️ Unduh Perbedaan</button></div>
           </div>
 
           <div class="card" style="margin: 0;">
@@ -9387,11 +9387,36 @@ async function reconcileDataWithRfidMap_(opt){
       return { scan: 0, move: 0, uid: 0 };
     }
     const anySku = skuRows > 0;
+    const diffList = [...diffs.values()];
+    const buildDiffXlsx_ = () => {
+      const ws1 = XLSX.utils.json_to_sheet(diffList.map(d => ({ "RFID": d.uid, "SKU di Data": d.fromSku, "SKU di Mapping": d.toSku, "Nama di Data": d.fromNama, "Nama di Mapping": d.toNama, "SKU Berbeda?": d.skuDiff ? "YA" : "tidak (hanya nama)" })));
+      const det = [];
+      const add = (src, x) => det.push({ "Sumber": src, "RFID": normUid_(x.r.uid) || normUid_((scanById.get(x.r.ref_id) || {}).uid) || "", "ID/Ref": x.r.ref_id || x.r.id || "", "Tanggal": x.r.ts || "", "Tipe": x.r.type || "", "Bin": x.r.bin || "", "SKU Lama": x.r.sku, "SKU Baru": x.t.sku, "Nama Lama": x.r.nama || "", "Nama Baru": x.t.nama || "", "Ubah SKU?": x.skuDiff ? "YA" : "tidak" });
+      scOut.forEach(x => add("Stok/Bin Reject", x)); mvOut.forEach(x => add("Log Tracking", x));
+      const ws2 = XLSX.utils.json_to_sheet(det);
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws1, "Ringkasan per RFID"); XLSX.utils.book_append_sheet(wb, ws2, "Detail Baris");
+      const d = new Date(), z = n => String(n).padStart(2, "0");
+      XLSX.writeFile(wb, "Perbedaan_vs_Mapping_RFID_" + d.getFullYear() + z(d.getMonth() + 1) + z(d.getDate()) + "_" + z(d.getHours()) + z(d.getMinutes()) + ".xlsx");
+    };
+    if(opt.downloadOnly){ buildDiffXlsx_(); toast(`✓ Diunduh: ${diffList.length} RFID berbeda. Tidak ada data yang diubah.`, "good"); return { scan: 0, move: 0, uid: diffList.length, downloaded: true }; }
     if(anySku && !isAdminNow_()){ toast("Perubahan SKU berdasarkan Mapping RFID hanya bisa dilakukan Admin.", "bad"); return null; }
     const list = [...diffs.values()];
     const sample = list.slice(0, 8).map(d => `• ${d.uid}: ${d.skuDiff ? `SKU ${d.fromSku} → ${d.toSku}; ` : ""}${d.fromNama} → ${d.toNama}`).join("\n");
-    const msg = `Ditemukan data yang BERBEDA dengan Mapping RFID:\n\n${list.length} RFID • stok/Data Bin Reject ${scOut.length} baris • log Tracking ${mvOut.length} baris${anySku ? `\n(termasuk perubahan SKU pada ${skuRows} baris)` : " (hanya nama)"}\n\nContoh:\n${sample}${list.length > 8 ? `\n… dan ${list.length - 8} RFID lain` : ""}\n\nSamakan semuanya ke Mapping RFID? Jumlah stok & Bin tidak berubah.`;
-    if(!opt.noConfirm && !confirm(msg)) { if(!opt.silent) toast("Dibatalkan, tidak ada data yang diubah.", "warning"); return { scan: 0, move: 0, uid: 0, cancelled: true }; }
+    const msg = `Ditemukan data yang BERBEDA dengan Mapping RFID:\n\n${list.length} RFID • stok/Data Bin Reject ${scOut.length} baris • log Tracking ${mvOut.length} baris${anySku ? `\n(termasuk perubahan SKU pada ${skuRows} baris)` : " (hanya nama)"}\n\nContoh:\n${sample}${list.length > 8 ? `\n… dan ${list.length - 8} RFID lain` : ""}\n\nKlik "Unduh Excel dulu" untuk memeriksa daftar lengkapnya, lalu "Samakan Sekarang" bila sudah benar. Jumlah stok & Bin tidak berubah.`;
+    const ask_ = () => new Promise(res => {
+      const ov = document.createElement("div");
+      ov.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:10000; display:flex; align-items:center; justify-content:center; padding:16px;";
+      const box = document.createElement("div");
+      box.style.cssText = "background:var(--bg-card); color:var(--text-main); border:1px solid var(--border); border-radius:12px; padding:18px; width:min(560px,100%); max-height:85vh; display:flex; flex-direction:column; box-shadow:0 12px 40px rgba(0,0,0,.35);";
+      const pre = document.createElement("pre"); pre.style.cssText = "white-space:pre-wrap; font:13px/1.45 var(--font-mono); overflow:auto; margin:0 0 14px;"; pre.textContent = msg;
+      const bar = document.createElement("div"); bar.style.cssText = "display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;";
+      const mk = (t, cls, fn) => { const b = document.createElement("button"); b.className = "btn btn-sm " + cls; b.textContent = t; b.onclick = fn; bar.appendChild(b); return b; };
+      mk("⬇️ Unduh Excel dulu", "btn-ghost", () => { try{ buildDiffXlsx_(); }catch(e){ toast("Gagal membuat Excel: " + e.message, "bad"); } });
+      mk("Batal", "btn-ghost", () => { ov.remove(); res(false); });
+      mk("✓ Samakan Sekarang", "btn-accent", () => { ov.remove(); res(true); });
+      box.appendChild(pre); box.appendChild(bar); ov.appendChild(box); document.body.appendChild(ov);
+    });
+    if(!opt.noConfirm && !(await ask_())) { if(!opt.silent) toast("Dibatalkan, tidak ada data yang diubah.", "warning"); return { scan: 0, move: 0, uid: 0, cancelled: true }; }
     const fix = (x) => {
       if(x.skuDiff) x.r.sku = x.t.sku;
       if(x.t.nama) x.r.nama = x.t.nama;
@@ -9412,6 +9437,12 @@ async function reconcileDataWithRfidMap_(opt){
   } finally { _rfidReconRunning = false; }
 }
 
+document.getElementById("btnDlRfidDiff").onclick = async () => {
+  const b = document.getElementById("btnDlRfidDiff"); b.disabled = true;
+  try{ const r = await reconcileDataWithRfidMap_({ silent: false, downloadOnly: true }); }
+  catch(err){ console.error(err); toast("Gagal mengunduh: " + err.message, "bad"); }
+  finally{ b.disabled = false; }
+};
 document.getElementById("btnSyncRfidData").onclick = async () => {
   const b = document.getElementById("btnSyncRfidData");
   b.disabled = true;
