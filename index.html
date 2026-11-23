@@ -1305,7 +1305,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
               <tbody id="poRecapBody"><tr><td colspan="9" class="hint" style="text-align:center;">Memuat...</td></tr></tbody>
             </table>
           </div>
-          <div class="hint" style="margin-top:8px;"><b>Qty PO</b> dari PO asli yang Anda input di atas. <b>Qty Inbound</b> = barang yang dieksekusi di Inbound dengan No. PO terisi. <b>Qty Reject</b> = unit di Data Bin Reject yang membawa PO tersebut. Selisih, % dan Status dihitung dari barang yang datang (Qty Inbound + barang reject yang diterima lewat Inbound, Tipe: BARANG REJECT, dengan No. PO yang sama) dikurangi Qty PO. Model diambil dari nama barang.</div>
+          <div class="hint" style="margin-top:8px;"><b>Qty PO</b> dari PO asli yang Anda input di atas. <b>Qty Inbound</b> = barang yang dieksekusi di Inbound dengan No. PO terisi. <b>Qty Reject</b> = unit reject yang diterima langsung lewat Inbound (Tipe: BARANG REJECT) dengan PO tersebut; barang yang sudah Inbound bagus lalu dipindah ke Bin Reject tidak dihitung ke PO. Selisih, % dan Status dihitung dari barang yang datang (Qty Inbound + barang reject yang diterima lewat Inbound, Tipe: BARANG REJECT, dengan No. PO yang sama) dikurangi Qty PO. Model diambil dari nama barang.</div>
         </div>
       </section>
 
@@ -7824,7 +7824,7 @@ function computePoRecap_(moves, scans){
     if(m.type === "INBOUND") get(po, poModelOf_(m.nama)).inbound++;
     else if(m.type === "REJECT") get(po, poModelOf_(m.nama)).rejectIn++;
   });
-  (scans || []).forEach(r => { if(r && r.type !== "OUT" && r.po && isRejectRow_(r)) get(String(r.po), poModelOf_(r.nama)).reject++; });
+  (scans || []).forEach(r => { if(r && r.type !== "OUT" && r.po && isRejectRow_(r) && !(r.rejectFrom && r.rejectFrom !== "-")) get(String(r.po), poModelOf_(r.nama)).reject++; }); // reject yang dipindah dari stok (sudah Inbound bagus) tidak dihitung ke PO
   return [...map.values()].sort((a, b) => a.po.localeCompare(b.po) || a.model.localeCompare(b.model)).map(o => {
     const datang = o.inbound + o.rejectIn;
     return {
@@ -8017,9 +8017,11 @@ document.getElementById("poDiag").onclick = async () => {
   const rjAlsoInb = rj.filter(r => inbUid.has(r.uid || r.code));
   const rjNoMove = rj.filter(r => !rinUid.has(r.uid || r.code) && !inbUid.has(r.uid || r.code));
   const revd = allPo.filter(m => m.reverted);
+  const lst = rjAlsoInb.map(r => `<tr><td>${esc(r.uid || r.code || "(tanpa RFID)")}</td><td>${esc(r.sku)}</td><td>${esc(r.nama)}</td><td>${esc(r.rejectFrom)} &rarr; ${esc(r.bin)}</td><td>${esc(r.rejectBy)}</td><td>${r.rejectAt ? esc(new Date(r.rejectAt).toLocaleString("id-ID")) : ""}</td></tr>`).join("");
   let h = `<h3 style="margin:0 0 8px;">Diagnosa PO ${esc(po)}</h3>`;
   h += `<p>INBOUND aktif: <b>${live.filter(m=>m.type==="INBOUND").length}</b> &nbsp;|&nbsp; REJECT langsung (Inbound): <b>${live.filter(m=>m.type==="REJECT").length}</b> &nbsp;|&nbsp; Reject di data stok: <b>${rj.length}</b> &nbsp;|&nbsp; Log dibatalkan: <b>${revd.length}</b></p>`;
   h += `<p>Reject di stok yang JUGA tercatat Inbound bagus (terhitung dobel bila dijumlah manual): <b>${rjAlsoInb.length}</b><br>Reject di stok tanpa log Inbound/Reject sama sekali: <b>${rjNoMove.length}</b><br>UID dobel pada log aktif: <b>${dup.length}</b>${dup.length ? " (" + dup.map(d => esc(d[0]) + " x" + d[1]).join(", ") + ")" : ""}</p>`;
+  if(lst) h += `<p style="margin:8px 0 4px;"><b>Unit yang diinbound bagus lalu dipindah ke reject:</b></p><div style="overflow:auto;"><table style="width:100%; font-size:12px; border-collapse:collapse; margin-bottom:10px;"><thead><tr><th style="text-align:left;">RFID</th><th style="text-align:left;">SKU</th><th style="text-align:left;">Nama</th><th style="text-align:left;">Bin asal &rarr; reject</th><th style="text-align:left;">Oleh</th><th style="text-align:left;">Waktu</th></tr></thead><tbody>${lst}</tbody></table></div>`;
   h += `<div style="overflow:auto; max-height:45vh;"><table style="width:100%; font-size:12px; border-collapse:collapse;"><thead><tr><th style="text-align:left;">Tipe</th><th style="text-align:left;">Nama di log</th><th style="text-align:left;">Masuk ke model rekap</th><th>Jml</th></tr></thead><tbody>`;
   Object.entries(grp).sort().forEach(([k, v]) => { const [t, n, m2] = k.split("||"); h += `<tr><td>${esc(t)}</td><td>${esc(n)}</td><td>${esc(m2)}</td><td style="text-align:center;">${v}</td></tr>`; });
   h += `</tbody></table></div><div style="margin-top:10px; text-align:right;"><button class="btn btn-ghost btn-sm" id="poDiagClose">Tutup</button></div>`;
