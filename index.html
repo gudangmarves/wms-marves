@@ -1297,6 +1297,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
             <input id="poFilter" class="input-sm" type="text" placeholder="🔍 Cari PO / Model..." autocomplete="off" style="margin:0; max-width:240px;">
             <button class="btn btn-ghost btn-sm" id="poRefresh">🔄 Refresh</button>
             <button class="btn btn-ghost btn-sm" id="poExport">⬇ Export Excel</button>
+            <button class="btn btn-ghost btn-sm" id="poDiag" title="Rincian log Inbound/Reject untuk No. PO yang diketik di kotak cari">🔬 Diagnosa PO</button>
           </div>
           <div class="scroll-table" style="max-height: 420px;">
             <table>
@@ -7998,6 +7999,37 @@ document.getElementById("poRecapBody").addEventListener("click", (e) => {
   poAsli = poAsli.filter(r => !(poNk_(r.po) === poNk_(po) && poNk_(r.model) === poNk_(model))); poSave_(); loadPoInbound();
 });
 document.getElementById("poRefresh").onclick = () => loadPoInbound();
+document.getElementById("poDiag").onclick = async () => {
+  let po = poNk_(document.getElementById("poFilter").value);
+  if(!po){ po = poNk_(prompt("Ketik No. PO lengkap (contoh: AN/2610-040):", "") || ""); }
+  if(!po){ return; }
+  const [mv, sc] = await Promise.all([idbGetAllMovements(), idbGetAllScans()]);
+  const esc = (x) => escUid_(String(x == null ? "" : x));
+  const allPo = mv.filter(m => m && poOfRemark_(m.remark) === po);
+  const live = allPo.filter(m => !m.reverted && (m.type === "INBOUND" || m.type === "REJECT"));
+  const grp = {};
+  live.forEach(m => { const k = m.type + "||" + (m.nama || "") + "||" + poResolveModel_(po, poModelOf_(m.nama)); grp[k] = (grp[k] || 0) + 1; });
+  const cnt = {}; live.forEach(m => { const k = m.uid || m.code; if(k) cnt[k] = (cnt[k] || 0) + 1; });
+  const dup = Object.entries(cnt).filter(([k, v]) => v > 1);
+  const inbUid = new Set(live.filter(m => m.type === "INBOUND").map(m => m.uid || m.code));
+  const rinUid = new Set(live.filter(m => m.type === "REJECT").map(m => m.uid || m.code));
+  const rj = sc.filter(r => r && r.type !== "OUT" && r.po && poNk_(r.po) === po && isRejectRow_(r));
+  const rjAlsoInb = rj.filter(r => inbUid.has(r.uid || r.code));
+  const rjNoMove = rj.filter(r => !rinUid.has(r.uid || r.code) && !inbUid.has(r.uid || r.code));
+  const revd = allPo.filter(m => m.reverted);
+  let h = `<h3 style="margin:0 0 8px;">Diagnosa PO ${esc(po)}</h3>`;
+  h += `<p>INBOUND aktif: <b>${live.filter(m=>m.type==="INBOUND").length}</b> &nbsp;|&nbsp; REJECT langsung (Inbound): <b>${live.filter(m=>m.type==="REJECT").length}</b> &nbsp;|&nbsp; Reject di data stok: <b>${rj.length}</b> &nbsp;|&nbsp; Log dibatalkan: <b>${revd.length}</b></p>`;
+  h += `<p>Reject di stok yang JUGA tercatat Inbound bagus (terhitung dobel bila dijumlah manual): <b>${rjAlsoInb.length}</b><br>Reject di stok tanpa log Inbound/Reject sama sekali: <b>${rjNoMove.length}</b><br>UID dobel pada log aktif: <b>${dup.length}</b>${dup.length ? " (" + dup.map(d => esc(d[0]) + " x" + d[1]).join(", ") + ")" : ""}</p>`;
+  h += `<div style="overflow:auto; max-height:45vh;"><table style="width:100%; font-size:12px; border-collapse:collapse;"><thead><tr><th style="text-align:left;">Tipe</th><th style="text-align:left;">Nama di log</th><th style="text-align:left;">Masuk ke model rekap</th><th>Jml</th></tr></thead><tbody>`;
+  Object.entries(grp).sort().forEach(([k, v]) => { const [t, n, m2] = k.split("||"); h += `<tr><td>${esc(t)}</td><td>${esc(n)}</td><td>${esc(m2)}</td><td style="text-align:center;">${v}</td></tr>`; });
+  h += `</tbody></table></div><div style="margin-top:10px; text-align:right;"><button class="btn btn-ghost btn-sm" id="poDiagClose">Tutup</button></div>`;
+  const old = document.getElementById("poDiagBox"); if(old) old.remove();
+  const box = document.createElement("div"); box.id = "poDiagBox";
+  box.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:99999; display:flex; align-items:center; justify-content:center; padding:16px;";
+  box.innerHTML = `<div style="background:var(--bg-card,#fff); color:var(--text-main,#111); max-width:900px; width:100%; max-height:90vh; overflow:auto; padding:16px; border-radius:10px;">${h}</div>`;
+  document.body.appendChild(box);
+  document.getElementById("poDiagClose").onclick = () => box.remove();
+};
 document.getElementById("poFilter").addEventListener("input", () => renderPoRecap_(poRecapCache));
 document.getElementById("poExport").onclick = () => {
   if(!poRecapCache.length){ toast("Belum ada data untuk diekspor.", "warning"); return; }
