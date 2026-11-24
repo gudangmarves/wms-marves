@@ -10201,9 +10201,9 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       <div style="font-weight:800; font-size:21px; line-height:1.25; margin-bottom:6px; color:var(--danger);">⏰ Ada peminjaman yang belum diproses!</div>
       <div style="font-size:15px; line-height:1.45; margin-bottom:10px;"><b style="font-size:17px;">${late.length} unit</b> Peminjaman/Bazar sudah <b>lewat batas</b> tanggal kembali dan belum dikembalikan ke gudang. Segera proses lewat menu <b>Kembali ke Gudang</b>.</div>
       <table style="width:100%; border-collapse:collapse;"><tbody>${rows}</tbody></table>${more}
-      <div style="display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap; margin-top:14px;">
-        <button class="btn btn-ghost" id="pjOdClose" type="button" style="font-size:15px; padding:9px 20px; font-weight:800;">Tutup</button>
-        <button class="btn btn-accent" id="pjOdGo" type="button" style="font-size:15px; padding:9px 20px; font-weight:800;">Lihat Daftar Lewat Tempo</button>
+      <div style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; margin-top:12px;">
+        <button class="btn btn-ghost" id="pjOdClose" type="button" style="font-size:13px; padding:6px 14px; font-weight:700;">Tutup</button>
+        <button class="btn btn-accent" id="pjOdGo" type="button" style="font-size:13px; padding:6px 14px; font-weight:700;">Lihat Daftar Lewat Tempo</button>
       </div></div>`;
     document.body.appendChild(ov);
     const close = () => ov.remove();
@@ -10235,12 +10235,10 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       alarmTimer_ = setInterval(() => { if (!dlgOpen_()) { clearInterval(alarmTimer_); alarmTimer_ = null; return; } scanBeep("late"); }, 8000);
     };
     if (window.scanAudioReady_ && window.scanAudioReady_()) { startLoop(); return; }
-    const dlg = document.getElementById("pjOverdueDlg");
-    if (dlg) { const h = document.createElement("div"); h.id = "pjOdHint"; h.style.cssText = "font-size:14px; margin-top:8px; padding:8px 12px; border-radius:8px; background:rgba(100,116,139,.15); font-weight:700;"; h.textContent = "🔇 Suara diblokir browser. Klik sekali di bagian putih kotak ini untuk membunyikan alarm."; dlg.firstElementChild.insertBefore(h, dlg.firstElementChild.querySelector("table")); }
     const go = e => {
       if (!dlgOpen_()) { off_(); return; } // popup sudah ditutup: tidak perlu bunyi
       if (e && e.target && e.target.closest && e.target.closest("#pjOdClose, #pjOdGo")) { off_(); return; }
-      off_(); const hint = document.getElementById("pjOdHint"); if (hint) hint.remove();
+      off_();
       setTimeout(() => { if (dlgOpen_()) startLoop(); }, 120);
     };
     const evs = ["pointerdown", "keydown", "touchstart"];
