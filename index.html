@@ -10193,17 +10193,17 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     const old = document.getElementById("pjOverdueDlg"); if (old) old.remove();
     const dayDiff = est => Math.max(1, Math.round((new Date(t + "T00:00:00") - new Date(est + "T00:00:00")) / 86400000));
     const sorted = late.slice().sort((x, y) => String(x.est).localeCompare(String(y.est)));
-    const MAX = 6, rows = sorted.slice(0, MAX).map(r => `<tr style="border-top:1px solid var(--border);"><td style="padding:12px 12px 12px 0; font-weight:800; font-size:21px; line-height:1.25; vertical-align:top;">${escUid_(r.who || "-")}</td><td style="padding:12px 12px 12px 0; vertical-align:top;"><b style="font-family:var(--font-mono); font-size:19px;">${escUid_(r.sku || "")}</b><br><span style="font-size:24px; line-height:1.3; font-weight:700; color:var(--text-main);">${escUid_(r.nama || "")}</span>${r.note ? `<div style="font-size:18px; line-height:1.3; margin-top:7px; padding:5px 10px; background:rgba(245,158,11,.14); border-left:5px solid var(--warning, #f59e0b); border-radius:6px; font-weight:700;">📝 Catatan: ${escUid_(r.note)}</div>` : ""}</td><td style="padding:12px 0; white-space:nowrap; text-align:right; font-size:19px; font-weight:700; vertical-align:top;">${escUid_(r.est)}<br><span class="badge bad" style="font-size:15px; padding:4px 10px; display:inline-block; margin-top:5px;">LEWAT ${dayDiff(r.est)} HARI</span></td></tr>`).join("");
-    const more = sorted.length > MAX ? `<div style="font-size:17px; color:var(--text-muted); margin-top:8px; font-weight:700;">... dan ${sorted.length - MAX} unit lainnya.</div>` : "";
+    const MAX = 5, rows = sorted.slice(0, MAX).map(r => `<tr style="border-top:1px solid var(--border);"><td style="padding:10px 10px 10px 0; font-weight:800; font-size:17px; line-height:1.25; vertical-align:top;">${escUid_(r.who || "-")}</td><td style="padding:10px 10px 10px 0; vertical-align:top;"><b style="font-family:var(--font-mono); font-size:15px;">${escUid_(r.sku || "")}</b><br><span style="font-size:19px; line-height:1.3; font-weight:700; color:var(--text-main);">${escUid_(r.nama || "")}</span>${r.note ? `<div style="font-size:15px; line-height:1.3; margin-top:6px; padding:4px 9px; background:rgba(245,158,11,.14); border-left:4px solid var(--warning, #f59e0b); border-radius:6px; font-weight:700;">📝 Catatan: ${escUid_(r.note)}</div>` : ""}</td><td style="padding:10px 0; white-space:nowrap; text-align:right; font-size:15px; font-weight:700; vertical-align:top;">${escUid_(r.est)}<br><span class="badge bad" style="font-size:12px; padding:3px 9px; display:inline-block; margin-top:4px;">LEWAT ${dayDiff(r.est)} HARI</span></td></tr>`).join("");
+    const more = sorted.length > MAX ? `<div style="font-size:14px; color:var(--text-muted); margin-top:6px; font-weight:700;">... dan ${sorted.length - MAX} unit lainnya.</div>` : "";
     const ov = document.createElement("div"); ov.id = "pjOverdueDlg";
-    ov.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:10000; display:flex; align-items:center; justify-content:center; padding:16px;";
-    ov.innerHTML = `<div style="background:var(--bg-card); color:var(--text-main); border:1px solid var(--border); border-top:6px solid var(--danger); border-radius:14px; padding:22px 26px; width:min(860px,100%); max-height:92vh; overflow:auto; box-shadow:0 14px 44px rgba(0,0,0,.4);">
-      <div style="font-weight:800; font-size:26px; line-height:1.25; margin-bottom:8px; color:var(--danger);">⏰ Ada peminjaman yang belum diproses!</div>
-      <div style="font-size:18px; line-height:1.45; margin-bottom:12px;"><b style="font-size:21px;">${late.length} unit</b> Peminjaman/Bazar sudah <b>lewat batas</b> tanggal kembali dan belum dikembalikan ke gudang. Segera proses lewat menu <b>Kembali ke Gudang</b>.</div>
+    ov.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:10000; display:flex; align-items:center; justify-content:center; padding:16px;";
+    ov.innerHTML = `<div style="background:var(--bg-card); color:var(--text-main); border:1px solid var(--border); border-top:5px solid var(--danger); border-radius:12px; padding:18px 22px; width:min(700px,100%); max-height:90vh; overflow:auto; box-shadow:0 12px 40px rgba(0,0,0,.35);">
+      <div style="font-weight:800; font-size:21px; line-height:1.25; margin-bottom:6px; color:var(--danger);">⏰ Ada peminjaman yang belum diproses!</div>
+      <div style="font-size:15px; line-height:1.45; margin-bottom:10px;"><b style="font-size:17px;">${late.length} unit</b> Peminjaman/Bazar sudah <b>lewat batas</b> tanggal kembali dan belum dikembalikan ke gudang. Segera proses lewat menu <b>Kembali ke Gudang</b>.</div>
       <table style="width:100%; border-collapse:collapse;"><tbody>${rows}</tbody></table>${more}
-      <div style="display:flex; gap:12px; justify-content:flex-end; flex-wrap:wrap; margin-top:18px;">
-        <button class="btn btn-ghost" id="pjOdClose" type="button" style="font-size:18px; padding:11px 24px; font-weight:800;">Tutup</button>
-        <button class="btn btn-accent" id="pjOdGo" type="button" style="font-size:18px; padding:11px 24px; font-weight:800;">Lihat Daftar Lewat Tempo</button>
+      <div style="display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap; margin-top:14px;">
+        <button class="btn btn-ghost" id="pjOdClose" type="button" style="font-size:15px; padding:9px 20px; font-weight:800;">Tutup</button>
+        <button class="btn btn-accent" id="pjOdGo" type="button" style="font-size:15px; padding:9px 20px; font-weight:800;">Lihat Daftar Lewat Tempo</button>
       </div></div>`;
     document.body.appendChild(ov);
     const close = () => ov.remove();
@@ -10212,7 +10212,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     ov.querySelector("#pjOdGo").onclick = () => { close(); switchTab("pinjam"); setTimeout(() => { const c = document.querySelector("[data-pjc=LATE]"); if (c) c.click(); }, 250); };
     ov.querySelector("#pjOdGo").focus();
   }
-  let lastRemindDay_ = "", pendingGesture_ = false;
+  let lastRemindDay_ = "";
   async function remindOverdue_(why) {
     let open = [];
     try { open = await loadOpen(); } catch (e) { return; }
@@ -10220,12 +10220,32 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     if (!late.length) return;
     lastRemindDay_ = t;
     showOverdueDialog_(late, t);
+    alarmWithDialog_();
+  }
+  // Bunyi harus menyertai popup: berulang tiap 8 detik selama popup masih terbuka, berhenti begitu ditutup.
+  // Browser memblokir suara bila halaman belum pernah diklik/diketik (mis. setelah refresh); dalam kasus itu
+  // bunyi mulai pada klik/ketikan pertama SELAMA popup masih terbuka (klik tombol Tutup tidak memicu bunyi).
+  let alarmTimer_ = null;
+  const dlgOpen_ = () => !!document.getElementById("pjOverdueDlg");
+  function alarmWithDialog_() {
     if (window.scanSoundOff_ && window.scanSoundOff_()) return;
-    if (window.scanAudioReady_ && window.scanAudioReady_()) { scanBeep("late"); return; }
-    // browser belum mengizinkan suara (belum ada klik/ketik): bunyikan pada interaksi pertama
-    if (pendingGesture_) return; pendingGesture_ = true;
-    const go = () => { ["pointerdown", "keydown", "touchstart"].forEach(ev => window.removeEventListener(ev, go, true)); pendingGesture_ = false; setTimeout(async () => { try { const o = await loadOpen(); if (o.some(r => r.est && r.est < today())) scanBeep("late"); } catch (e) {} }, 150); };
-    ["pointerdown", "keydown", "touchstart"].forEach(ev => window.addEventListener(ev, go, { capture: true, passive: true }));
+    if (alarmTimer_) { clearInterval(alarmTimer_); alarmTimer_ = null; }
+    const startLoop = () => {
+      scanBeep("late");
+      alarmTimer_ = setInterval(() => { if (!dlgOpen_()) { clearInterval(alarmTimer_); alarmTimer_ = null; return; } scanBeep("late"); }, 8000);
+    };
+    if (window.scanAudioReady_ && window.scanAudioReady_()) { startLoop(); return; }
+    const dlg = document.getElementById("pjOverdueDlg");
+    if (dlg) { const h = document.createElement("div"); h.id = "pjOdHint"; h.style.cssText = "font-size:14px; margin-top:8px; padding:8px 12px; border-radius:8px; background:rgba(100,116,139,.15); font-weight:700;"; h.textContent = "🔇 Suara diblokir browser. Klik sekali di bagian putih kotak ini untuk membunyikan alarm."; dlg.firstElementChild.insertBefore(h, dlg.firstElementChild.querySelector("table")); }
+    const go = e => {
+      if (!dlgOpen_()) { off_(); return; } // popup sudah ditutup: tidak perlu bunyi
+      if (e && e.target && e.target.closest && e.target.closest("#pjOdClose, #pjOdGo")) { off_(); return; }
+      off_(); const hint = document.getElementById("pjOdHint"); if (hint) hint.remove();
+      setTimeout(() => { if (dlgOpen_()) startLoop(); }, 120);
+    };
+    const evs = ["pointerdown", "keydown", "touchstart"];
+    const off_ = () => evs.forEach(ev => window.removeEventListener(ev, go, true));
+    evs.forEach(ev => window.addEventListener(ev, go, { capture: true, passive: true }));
   }
   window.pjRemindOnOpen_ = () => { setTimeout(() => remindOverdue_("open"), 1200); }; // jeda singkat agar data lokal siap
   // aplikasi dibiarkan terbuka sampai ganti hari / tab kembali aktif di hari baru: ingatkan sekali per hari
