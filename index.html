@@ -2133,7 +2133,7 @@ function sbBase_(u){
   try { return new URL(u).origin; } catch(e){ return u.replace(/\/+$/, ""); }
 }
 // Password Administrator (dipakai login Admin & semua konfirmasi admin). Ganti di sini saja.
-const ADMIN_PASSWORD_HASH = "03eccd15e4946e2e3f50170ea4dfdebbdea826b4c97e06353134ef333d8a71a4"; // hanya hash; password asli tidak disimpan di source
+const ADMIN_PASSWORD_HASH = "f90d877d42e76ef6a32963f5ae3b09ee6f9621ff1d1f993c70eca5a207ddcdbe"; // hanya hash; password asli tidak disimpan di source
 
 /* ============================================================
    USER & AUDIT: akun per orang. Setiap transaksi dicap nama pelakunya (field "by").
@@ -2152,7 +2152,7 @@ const SEED_USERS = [
   { name: "Indra", hash: "68d144c0f3d7cd36a69bdb8d6e8b1989d807506ad05c2703514053e3608b8e2b", pw: "suryageblek", role: "indra" },
   { name: "Outbound", hash: "d51832dd4b6b229e3a939abcd13717e14c82eae03986393ba7725a4f86fd037f", pw: "teamoutbound", role: "outbound" },
   { name: "Rika", hash: "f757e9a52515813a68ad716945c0bc1624aa23f97d658dbe5f75fcfe0eedee2e", pw: "rikayuks", role: "rika" },
-  { name: "admin", hash: "821bae8ac928b9568087361322a0185847944bb1663c4d7eb0fa532ec974e88f", role: "admin" },
+  { name: "admin", hash: "f90d877d42e76ef6a32963f5ae3b09ee6f9621ff1d1f993c70eca5a207ddcdbe", role: "admin" },
   /*SEED_USERS_END*/
 ];
 /* Versi file: bila akun tertanam (SEED_USERS) diubah di file/GitHub (password atau peran), nilai di file otomatis
@@ -2299,7 +2299,7 @@ function sha256Hex_(str){
 }
 function hashPw_(name, pw){ return sha256Hex_("wms|" + String(name).trim().toLowerCase() + "|" + String(pw)); }
 // Password administrator tertanam di file ini (hash saja): login tidak bergantung pada data browser/localStorage.
-const ADMIN_PASSWORD_HASHES = [ADMIN_PASSWORD_HASH, "821bae8ac928b9568087361322a0185847944bb1663c4d7eb0fa532ec974e88f"];
+const ADMIN_PASSWORD_HASHES = [ADMIN_PASSWORD_HASH]; // hanya satu password admin yang berlaku (password lama sudah dicabut)
 function isAdminPw_(p){ return typeof p === "string" && ADMIN_PASSWORD_HASHES.indexOf(hashPw_("admin", p)) !== -1; }
 
 /* ---- Sanitasi data masuk: cegah penyuntikan kode lewat SKU/Bin/UID/nama yang berisi karakter berbahaya ----
