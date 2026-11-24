@@ -1986,7 +1986,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
               <select id="usrRole" class="input-sm" style="min-width:150px;">
                 <option value="operator">Operator (gudang)</option>
                 <option value="outbound">Tim Outbound (Pencarian + Tracking Movement + Peminjaman/Bazar + Outbound)</option>
-                <option value="indra">INDRA (Inbound/Retur, Outbound, Stock Opname, Transfer Bin, Transfer Gudang, Pencarian, Tracking Movement, History CC &amp; Transfer, Rekap Inbound, Pendingan, Master Produk, Mapping RFID)</option>
+                <option value="indra">INDRA (Inbound/Retur, Outbound, Stock Opname, Transfer Bin, Transfer Gudang, Pencarian, Tracking Movement + Kembalikan Outbound, History CC &amp; Transfer, Rekap Inbound, Pendingan, Master Produk, Mapping RFID)</option>
                 <option value="rika">RIKA (Inbound/Retur, Rekap Inbound, Data Bin Reject, Master Produk, Mapping RFID, Pencarian, Tracking Movement, Peminjaman/Bazar, Outbound)</option>
                 <option value="admin">Admin</option>
                 <option value="dashboard">Dashboard saja</option>
@@ -8641,8 +8641,8 @@ async function loadMovements(filterSku = "", startDate = "", endDate = "") {
         let aksiHtml = '<span class="hint">-</span>';
         if (r.type === 'OUTBOUND' && r.reverted) {
             aksiHtml = `<span class="badge muted" title="Dikembalikan oleh ${escUid_(r.revertedBy || '-')} pada ${r.revertedAt ? new Date(r.revertedAt).toLocaleString('id-ID') : '-'}">↩ DIKEMBALIKAN</span>`;
-        } else if (r.type === 'OUTBOUND' && !isOpnameMove && r.ref_id && isAdminNow_()) {
-            aksiHtml = `<button class="btn btn-ghost btn-sm" data-mv-undo="${escUid_(r.id)}" title="Kembalikan unit ke Bin awal (khusus Admin)">↩ Kembalikan</button>`;
+        } else if (r.type === 'OUTBOUND' && !isOpnameMove && r.ref_id && canUndoOutbound_()) {
+            aksiHtml = `<button class="btn btn-ghost btn-sm" data-mv-undo="${escUid_(r.id)}" title="Kembalikan unit ke Bin awal (Admin & INDRA)">↩ Kembalikan</button>`;
         } else if (r.type === 'INBOUND' && r.reverted) {
             aksiHtml = `<span class="badge muted" title="Inbound berlebih dihapus oleh ${escUid_(r.revertedBy || '-')} pada ${r.revertedAt ? new Date(r.revertedAt).toLocaleString('id-ID') : '-'}">🗑 DIHAPUS</span>`;
         } else if ((r.type === 'INBOUND' || r.type === 'REJECT') && !isOpnameMove && !r.reverted && canEditPoDoc_()) {
@@ -8674,12 +8674,12 @@ async function loadMovements(filterSku = "", startDate = "", endDate = "") {
   }
 }
 
-/* ---- Kembalikan (batal) OUTBOUND dari Tracking Movement: khusus Admin ----
+/* ---- Kembalikan (batal) OUTBOUND dari Tracking Movement: Admin & INDRA ----
    Unit dibuat ulang di Bin tempat ia keluar (tanggal masuk asli dipertahankan bila log INBOUND-nya masih ada).
    Log OUTBOUND asli ditandai "reverted" (tetap tersimpan sebagai jejak audit, tidak dihitung di analisa), dan
    dicatat log baru bertipe UNDO_OUTBOUND. */
 async function undoOutboundMovement_(moveId){
-  if(!isAdminNow_()){ toast("Hanya Admin yang bisa mengembalikan barang dari Outbound.", "bad"); return; }
+  if(!canUndoOutbound_()){ toast("Hanya Admin dan INDRA yang bisa mengembalikan barang dari Outbound.", "bad"); return; }
   const moves = await idbGetAllMovements();
   const m = moves.find(x => x && x.id === moveId);
   if(!m || m.type !== 'OUTBOUND'){ toast("Log OUTBOUND tidak ditemukan.", "bad"); return; }
@@ -10011,7 +10011,9 @@ function planOutboundBulk_(items, stockRows, codeOf){
 /* ============ KELOLA USER (khusus Admin) ============ */
 const USER_ROLE_LABEL_ = { admin: "Admin", operator: "Operator", outbound: "Tim Outbound", indra: "INDRA", rika: "RIKA", dashboard: "Dashboard saja", search: "Pencarian saja" };
 function isAdminNow_(){ return sessionStorage.getItem("wms_role") === "admin"; }
-// Edit No. PO & No. Dokumen di Tracking Movement: boleh Admin dan role RIKA (hapus Inbound & Kembalikan tetap khusus Admin)
+// Edit No. PO & No. Dokumen di Tracking Movement: boleh Admin dan role RIKA (hapus Inbound tetap khusus Admin; Kembalikan Outbound: Admin & INDRA)
+// Kembalikan (batal) Outbound di Tracking Movement: boleh Admin dan role INDRA
+function canUndoOutbound_(){ const r = sessionStorage.getItem("wms_role"); return r === "admin" || r === "indra"; }
 function canEditPoDoc_(){ const r = sessionStorage.getItem("wms_role"); return r === "admin" || r === "rika"; }
 
 let usrShowPw_ = false;
