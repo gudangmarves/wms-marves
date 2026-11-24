@@ -600,7 +600,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
 <body>
 
 <style>
-  body.role-restricted #btnCloudSettings, body.role-restricted #btnCancelSync,
+  body.role-restricted #btnCloudSettings, body.role-restricted #btnCancelSync, body.role-restricted #btnCleanMovements,
   body.role-restricted #dashboardPrintArea button[onclick*="fileDashLogo"] { display:none !important; }
   #loginGate { position:fixed; inset:0; z-index:99999; display:flex; align-items:center; justify-content:center; padding:16px;
     background:linear-gradient(135deg,#27476e,#5b8fc9); font-family:inherit; }
@@ -1423,6 +1423,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
             <div class="toolbar-spacer"></div>
             <span class="toolbar-count">Log: <b id="statMoveQty">0</b></span>
             <button class="btn btn-ghost btn-sm" id="btnExportMovements" title="Export hasil sesuai filter yang aktif (kosongkan filter untuk export semua data)">⬇️ Export</button>
+            <button class="btn btn-ghost btn-sm" id="btnCleanMovements" title="Khusus Admin: hapus bersih log sampah (SKU {RFID_CODE:...} dan SKU tanpa nama yang tidak ada di Master) di Lokal & Supabase">🧹 Bersihkan</button>
             <button class="btn btn-danger btn-sm" id="btnDeleteDocData" title="Hapus SEMUA data satu No. Dokumen (stok, Data Bin Reject, log Inbound/Outbound/Transfer unit-nya) di Lokal & Cloud — khusus Admin, ada backup otomatis">🗑️ Hapus Dokumen</button>
             <button class="btn btn-danger btn-sm" id="btnClearMovements" title="Bersihkan log TRANSFER saja (Inbound/Outbound/Sales/Retur/Delete tetap disimpan)">🗑️ Transfer</button>
             <button class="btn btn-danger btn-sm" id="btnClearMovementsAll" title="Hapus SEMUA Movement Log — Lokal &amp; Cloud (Google Sheets)">🗑️ Semua (Cloud)</button>
@@ -9002,6 +9003,48 @@ document.getElementById("moveSearchSku").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); showSkuSummary(document.getElementById("moveSearchSku").value); }
 });
 document.getElementById("btnCloseSkuSummary").onclick = () => document.getElementById("skuSummaryModal").classList.remove("show");
+
+
+/* ---- BERSIHKAN LOG SAMPAH (khusus Admin) ----
+   Kriteria A: SKU berbentuk {RFID_CODE:...} (QR RFID yang belum terpetakan) -> log Tracking Movement DAN baris stoknya.
+   Kriteria B: log Tracking Movement yang Nama Barang-nya kosong / "-" / #N/A DAN SKU-nya tidak ada di Master (hanya bila Master termuat di komputer ini).
+   Dihapus di Lokal + antrean sinkron ke Supabase (tabel movementlog & scanlog). Backup JSON diunduh otomatis. */
+async function cleanMovementJunk_(){
+  if(!isAdminNow_()){ toast("Hanya Admin yang bisa membersihkan log.", "bad"); return; }
+  const up = v => String(v == null ? "" : v).trim().toUpperCase();
+  const isCode = v => /RFID_CODE/i.test(String(v == null ? "" : v));
+  const blankName = n => { const t = up(n); return t === "" || t === "-" || t === "#N/A" || t === "N/A"; };
+  const [mv, sc, master] = [await idbGetAllMovements(), await idbGetAllScans(), await idbGetAllMaster()];
+  const masterSet = new Set(master.map(m => up(m && m.sku)));
+  const hasMaster = masterSet.size > 0;
+  const mvA = mv.filter(m => m && isCode(m.sku));
+  const idA = new Set(mvA.map(m => m.id));
+  const mvB = hasMaster ? mv.filter(m => m && !idA.has(m.id) && up(m.sku) !== "" && up(m.sku) !== "-" && blankName(m.nama) && !masterSet.has(up(m.sku))) : [];
+  const scA = sc.filter(r => r && isCode(r.sku));
+  const mvDel = mvA.concat(mvB);
+  if(!mvDel.length && !scA.length){ toast("Tidak ada log sampah yang ditemukan di komputer ini." + (hasMaster ? "" : " (Master belum termuat di sini, kriteria B dilewati)"), "good"); return; }
+  const sample = Array.from(new Set(mvDel.map(m => String(m.sku)).concat(scA.map(r => String(r.sku))))).slice(0, 6).join("\n  ");
+  const info = `BERSIHKAN LOG SAMPAH\n\nA. SKU {RFID_CODE:...}: ${mvA.length} log Tracking + ${scA.length} baris stok\nB. Tanpa nama & SKU tidak ada di Master: ${mvB.length} log Tracking` + (hasMaster ? "" : " (DILEWATI: Master belum termuat di komputer ini)")
+    + `\n\nContoh SKU:\n  ${sample}\n\nDihapus di Lokal DAN Supabase. Backup JSON diunduh otomatis.`;
+  if(!confirm(info + "\n\nLanjutkan?")) return;
+  const pass = prompt("Masukkan Password Administrator untuk menghapus log sampah:");
+  if(pass === null) return;
+  if(!isAdminPw_(pass)){ toast("Password salah! Akses ditolak.", "bad"); return; }
+  const again = prompt(`Konfirmasi terakhir: ketik HAPUS untuk menghapus ${mvDel.length} log dan ${scA.length} baris stok.`);
+  if(again === null || String(again).trim().toUpperCase() !== "HAPUS"){ toast("Dibatalkan.", "warning"); return; }
+  try{
+    const blob = new Blob([JSON.stringify({ at: new Date().toISOString(), by: curBy_(), movementlog: mvDel, scanlog: scA }, null, 1)], { type: "application/json" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = `Backup_Bersihkan_Log_${new Date().toISOString().slice(0,19).replace(/[:T]/g, "-")}.json`;
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  }catch(e){ console.error(e); if(!confirm("Backup otomatis GAGAL diunduh. Tetap hapus tanpa backup?")) return; }
+  const mvIds = mvDel.map(m => m.id), scIds = scA.map(r => r.id);
+  if(mvIds.length){ await idbRawDeleteMany_("movementlog", mvIds); await idbEnqueueSync("movementlog", "del", mvIds); }
+  if(scIds.length){ await idbRawDeleteMany_("scanlog", scIds); await idbEnqueueSync("scanlog", "del", scIds); }
+  toast(`✓ ${mvIds.length} log & ${scIds.length} baris stok dihapus (Lokal + antrean ke Supabase).`, "good");
+  try{ loadMovements(document.getElementById("moveSearchSku").value, document.getElementById("moveStartDate").value, document.getElementById("moveEndDate").value); }catch(e){}
+}
+document.getElementById("btnCleanMovements").onclick = () => { cleanMovementJunk_().catch(err => { console.error(err); toast("Gagal membersihkan log: " + err.message, "bad"); }); };
 
 document.getElementById("btnExportMovements").onclick = async ()=>{
   // Export mengikuti filter yang sedang aktif (kata kunci + tanggal). Tanpa filter = semua data.
