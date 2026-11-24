@@ -8632,10 +8632,10 @@ async function loadMovements(filterSku = "", startDate = "", endDate = "") {
             aksiHtml = `<button class="btn btn-ghost btn-sm" data-mv-undo="${escUid_(r.id)}" title="Kembalikan unit ke Bin awal (khusus Admin)">↩ Kembalikan</button>`;
         } else if (r.type === 'INBOUND' && r.reverted) {
             aksiHtml = `<span class="badge muted" title="Inbound berlebih dihapus oleh ${escUid_(r.revertedBy || '-')} pada ${r.revertedAt ? new Date(r.revertedAt).toLocaleString('id-ID') : '-'}">🗑 DIHAPUS</span>`;
-        } else if ((r.type === 'INBOUND' || r.type === 'REJECT') && !isOpnameMove && !r.reverted && isAdminNow_()) {
-            aksiHtml = `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-mv-po="${escUid_(r.id)}" title="Edit No. PO pada log Inbound ini (stok tidak berubah, khusus Admin)">✏️ PO</button>`
-              + ` <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-mv-doc="${escUid_(r.id)}" title="Edit No. Dokumen pada log ini (stok tidak berubah, khusus Admin)">✏️ Dok</button>`
-              + (r.type === 'INBOUND' ? ` <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-mv-delin="${escUid_(r.id)}" title="Hapus Inbound berlebih: unit ini dikeluarkan dari stok dan log dibatalkan (khusus Admin)">🗑️</button>` : '');
+        } else if ((r.type === 'INBOUND' || r.type === 'REJECT') && !isOpnameMove && !r.reverted && canEditPoDoc_()) {
+            aksiHtml = `<button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-mv-po="${escUid_(r.id)}" title="Edit No. PO pada log Inbound ini (stok tidak berubah, Admin & RIKA)">✏️ PO</button>`
+              + ` <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-mv-doc="${escUid_(r.id)}" title="Edit No. Dokumen pada log ini (stok tidak berubah, Admin & RIKA)">✏️ Dok</button>`
+              + (r.type === 'INBOUND' && isAdminNow_() ? ` <button class="btn btn-ghost btn-sm" style="padding:0 7px;" data-mv-delin="${escUid_(r.id)}" title="Hapus Inbound berlebih: unit ini dikeluarkan dari stok dan log dibatalkan (khusus Admin)">🗑️</button>` : '');
         }
         if (r.reverted) tr.style.opacity = "0.55";
 
@@ -8691,11 +8691,11 @@ async function undoOutboundMovement_(moveId){
       `Batal Outbound ${m.ts ? new Date(m.ts).toLocaleString("id-ID") : ""}${m.remark ? " (" + m.remark + ")" : ""}`, m.docNo || "", m.uid);
   toast(`✓ ${m.sku}${U ? " (" + U + ")" : ""} dikembalikan ke Bin ${bin}`, "good");
 }
-/* ---- Edit No. PO pada log Inbound (Tracking Movement): khusus Admin ----
+/* ---- Edit No. PO pada log Inbound (Tracking Movement): Admin & RIKA ----
    Hanya mengubah tag " | PO xxx" pada remark log (movement) dan baris stok yang sesuai (scan, id = ref_id log).
    Jumlah stok, Bin, SKU, RFID tidak berubah. Pilihan ruang lingkup: baris ini saja, atau semua log dengan PO + model yang sama. */
 async function editMovementPo_(moveId){
-  if(!isAdminNow_()){ toast("Hanya Admin yang bisa mengedit No. PO pada data Inbound.", "bad"); return; }
+  if(!canEditPoDoc_()){ toast("Hanya Admin atau RIKA yang bisa mengedit No. PO pada data Inbound.", "bad"); return; }
   const moves = await idbGetAllMovements();
   const m = moves.find(x => x && x.id === moveId);
   if(!m || (m.type !== "INBOUND" && m.type !== "REJECT")){ toast("Log Inbound tidak ditemukan.", "bad"); return; }
@@ -8736,12 +8736,12 @@ async function editMovementPo_(moveId){
   try{ invalidateUidIndex(); }catch(e){}
   toast(newPo ? `✓ No. PO ${newPo} disimpan pada ${mvOut.length} log` : `✓ No. PO dilepas dari ${mvOut.length} log`, "good");
 }
-/* ---- Edit No. Dokumen pada log Inbound/Reject (Tracking Movement): khusus Admin ----
+/* ---- Edit No. Dokumen pada log Inbound/Reject (Tracking Movement): Admin & RIKA ----
    Mengubah field docNo pada log (movement) dan baris stok yang sesuai (scan, id = ref_id log).
    Jumlah stok, Bin, SKU, RFID, No. PO tidak berubah. Pilihan ruang lingkup: baris ini saja, atau semua log dengan dokumen lama yang sama.
    Catatan: hitungan "Sudah Masuk" pada Dokumen Mutasi lokal TIDAK dihitung ulang oleh fitur ini. */
 async function editMovementDoc_(moveId){
-  if(!isAdminNow_()){ toast("Hanya Admin yang bisa mengedit No. Dokumen pada data Inbound.", "bad"); return; }
+  if(!canEditPoDoc_()){ toast("Hanya Admin atau RIKA yang bisa mengedit No. Dokumen pada data Inbound.", "bad"); return; }
   const moves = await idbGetAllMovements();
   const m = moves.find(x => x && x.id === moveId);
   if(!m || (m.type !== "INBOUND" && m.type !== "REJECT")){ toast("Log Inbound tidak ditemukan.", "bad"); return; }
@@ -9946,6 +9946,8 @@ function planOutboundBulk_(items, stockRows, codeOf){
 /* ============ KELOLA USER (khusus Admin) ============ */
 const USER_ROLE_LABEL_ = { admin: "Admin", operator: "Operator", outbound: "Tim Outbound", indra: "INDRA", rika: "RIKA", dashboard: "Dashboard saja", search: "Pencarian saja" };
 function isAdminNow_(){ return sessionStorage.getItem("wms_role") === "admin"; }
+// Edit No. PO & No. Dokumen di Tracking Movement: boleh Admin dan role RIKA (hapus Inbound & Kembalikan tetap khusus Admin)
+function canEditPoDoc_(){ const r = sessionStorage.getItem("wms_role"); return r === "admin" || r === "rika"; }
 
 let usrShowPw_ = false;
 function loadUsersTab(){
