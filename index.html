@@ -10156,7 +10156,9 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   const durTxt = r => { const a = new Date(r.ts), b = r.retTs ? new Date(r.retTs) : new Date(); if (isNaN(a) || isNaN(b)) return "-"; const d = Math.floor((b - a) / 86400000); return d < 1 ? "<1 hari" : d + " hari"; };
   function visibleHist() {
     const q = ($("pjSearch").value || "").trim().toLowerCase();
-    return hist.filter(r => r.status === "DONE" && (chip === "all" || r.type === chip) && (!q || [r.who, r.sku, r.nama, r.uid, r.bin, r.note].join(" ").toLowerCase().includes(q)));
+    // Urut berdasarkan TANGGAL KEMBALI terbaru di atas (bukan tanggal keluar); bila sama, tanggal keluar terbaru dulu.
+    return hist.filter(r => r.status === "DONE" && (chip === "all" || r.type === chip) && (!q || [r.who, r.sku, r.nama, r.uid, r.bin, r.note].join(" ").toLowerCase().includes(q)))
+      .sort((a, b) => String(b.retTs || "").localeCompare(String(a.retTs || "")) || String(b.ts || "").localeCompare(String(a.ts || "")));
   }
   function renderHist() {
     const rows = visibleHist();
