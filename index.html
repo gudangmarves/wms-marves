@@ -3365,9 +3365,12 @@ function toast(msg, type=""){
     const now = Date.now(); if(now - last < 120) return; last = now; // scan beruntun / upload massal: tidak numpuk
     const c = getCtx(); if(!c) return; const t = c.currentTime;
     if(kind === "bad"){ tone(c, 440, t, 0.22, "square", 0.9); tone(c, 330, t + 0.26, 0.22, "square", 0.9); tone(c, 440, t + 0.52, 0.22, "square", 0.9); }
+    else if(kind === "late"){ for(let i = 0; i < 3; i++){ const o = t + i * 0.55; tone(c, 880, o, 0.18, "square", 0.9); tone(c, 1320, o + 0.2, 0.18, "square", 0.9); } }
     else if(kind === "warn"){ tone(c, 1000, t, 0.14, "square", 0.9); tone(c, 1000, t + 0.2, 0.14, "square", 0.9); }
     else { tone(c, 1568, t, 0.14, "square", 0.9); tone(c, 2093, t + 0.15, 0.22, "square", 0.9); }
   };
+  window.scanAudioReady_ = () => !off && !!ctx && ctx.state === "running"; // dipakai pengingat lewat tempo
+  window.scanSoundOff_ = () => off;
   const mkToggle = () => {
     if(document.getElementById("soundToggle")) return;
     const b = document.createElement("button"); b.id = "soundToggle"; b.type = "button";
@@ -10180,6 +10183,56 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     const ws = XLSX.utils.json_to_sheet(rows.map(r => ({ "Tgl Keluar": fmtD(r.ts), "Tipe": r.type, "Peminjam/Bazar": r.who, "SKU": r.sku, "Nama Barang": r.nama, "RFID": r.uid || "", "Bin Asal": r.bin, "Est. Kembali": r.est, "Catatan": r.note, "Dicatat Oleh": r.by || "" })));
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Pinjam-Bazar"); XLSX.writeFile(wb, "Peminjaman_Bazar_" + today() + ".xlsx"); };
   $("navPinjam").onclick = () => switchTab("pinjam");
+
+  /* ---- PENGINGAT LEWAT TEMPO ----
+     Bunyi + toast: (1) sekali saat aplikasi dibuka (setelah login / sesi dipulihkan),
+     (2) sekali tiap hari berikutnya bila aplikasi dibiarkan terbuka.
+     Yang dihitung hanya unit berstatus OPEN (belum Kembali ke Gudang) dengan est. kembali < hari ini,
+     jadi begitu barang dikembalikan, pengingat untuk barang itu otomatis berhenti. */
+  function showOverdueDialog_(late, t) {
+    const old = document.getElementById("pjOverdueDlg"); if (old) old.remove();
+    const dayDiff = est => Math.max(1, Math.round((new Date(t + "T00:00:00") - new Date(est + "T00:00:00")) / 86400000));
+    const sorted = late.slice().sort((x, y) => String(x.est).localeCompare(String(y.est)));
+    const MAX = 8, rows = sorted.slice(0, MAX).map(r => `<tr><td style="padding:5px 8px 5px 0; font-weight:700;">${escUid_(r.who || "-")}</td><td style="padding:5px 8px 5px 0;"><b style="font-family:var(--font-mono); font-size:12px;">${escUid_(r.sku || "")}</b><br><span style="font-size:11px; color:var(--text-muted);">${escUid_(r.nama || "")}</span></td><td style="padding:5px 0; white-space:nowrap; text-align:right;">${escUid_(r.est)}<br><span class="badge bad">lewat ${dayDiff(r.est)} hari</span></td></tr>`).join("");
+    const more = sorted.length > MAX ? `<div style="font-size:12px; color:var(--text-muted); margin-top:6px;">... dan ${sorted.length - MAX} unit lainnya.</div>` : "";
+    const ov = document.createElement("div"); ov.id = "pjOverdueDlg";
+    ov.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:10000; display:flex; align-items:center; justify-content:center; padding:16px;";
+    ov.innerHTML = `<div style="background:var(--bg-card); color:var(--text-main); border:1px solid var(--border); border-top:4px solid var(--danger); border-radius:12px; padding:18px 20px; width:min(560px,100%); max-height:85vh; overflow:auto; box-shadow:0 12px 40px rgba(0,0,0,.35);">
+      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">⏰ Ada peminjaman yang belum diproses</div>
+      <div style="font-size:13px; margin-bottom:10px;"><b>${late.length} unit</b> Peminjaman/Bazar sudah melewati batas estimasi kembali dan belum dikembalikan ke gudang. Segera proses lewat <b>Kembali ke Gudang</b>.</div>
+      <table style="width:100%; border-collapse:collapse; font-size:13px;"><tbody>${rows}</tbody></table>${more}
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:14px;">
+        <button class="btn btn-ghost" id="pjOdClose" type="button">Tutup</button>
+        <button class="btn btn-accent" id="pjOdGo" type="button">Lihat Daftar Lewat Tempo</button>
+      </div></div>`;
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.querySelector("#pjOdClose").onclick = close;
+    ov.addEventListener("click", e => { if (e.target === ov) close(); });
+    ov.querySelector("#pjOdGo").onclick = () => { close(); switchTab("pinjam"); setTimeout(() => { const c = document.querySelector("[data-pjc=LATE]"); if (c) c.click(); }, 250); };
+    ov.querySelector("#pjOdGo").focus();
+  }
+  let lastRemindDay_ = "", pendingGesture_ = false;
+  async function remindOverdue_(why) {
+    let open = [];
+    try { open = await loadOpen(); } catch (e) { return; }
+    const t = today(), late = open.filter(r => r.est && r.est < t);
+    if (!late.length) return;
+    lastRemindDay_ = t;
+    showOverdueDialog_(late, t);
+    if (window.scanSoundOff_ && window.scanSoundOff_()) return;
+    if (window.scanAudioReady_ && window.scanAudioReady_()) { scanBeep("late"); return; }
+    // browser belum mengizinkan suara (belum ada klik/ketik): bunyikan pada interaksi pertama
+    if (pendingGesture_) return; pendingGesture_ = true;
+    const go = () => { ["pointerdown", "keydown", "touchstart"].forEach(ev => window.removeEventListener(ev, go, true)); pendingGesture_ = false; setTimeout(async () => { try { const o = await loadOpen(); if (o.some(r => r.est && r.est < today())) scanBeep("late"); } catch (e) {} }, 150); };
+    ["pointerdown", "keydown", "touchstart"].forEach(ev => window.addEventListener(ev, go, { capture: true, passive: true }));
+  }
+  window.pjRemindOnOpen_ = () => { setTimeout(() => remindOverdue_("open"), 1200); }; // jeda singkat agar data lokal siap
+  // aplikasi dibiarkan terbuka sampai ganti hari / tab kembali aktif di hari baru: ingatkan sekali per hari
+  const dayCheck_ = () => { if (lastRemindDay_ && lastRemindDay_ !== today()) remindOverdue_("daily"); };
+  setInterval(dayCheck_, 60000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) dayCheck_(); });
+
   setMode("out");
 })();
 
@@ -10239,6 +10292,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     gate.style.display = "none";
     origSwitch(admin ? "scan" : a[0]);
     if(!admin) forceFull();
+    if(allows("pinjam") && window.pjRemindOnOpen_) window.pjRemindOnOpen_(); // pengingat barang lewat tempo
   }
 
   let lgChecking_ = false;
