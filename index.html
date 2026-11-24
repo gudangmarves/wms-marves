@@ -1983,7 +1983,8 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
               <input type="password" id="usrPass" class="input-sm" placeholder="Password (min. 4 karakter)" autocomplete="new-password" style="flex:1; min-width:160px;">
               <select id="usrRole" class="input-sm" style="min-width:150px;">
                 <option value="operator">Operator (gudang)</option>
-                <option value="outbound">Tim Outbound (Outbound + Data Bin Reject + Pencarian)</option>
+                <option value="outbound">Tim Outbound (Pencarian + Tracking Movement + Peminjaman/Bazar + Outbound)</option>
+                <option value="rika">RIKA (Inbound/Retur, Rekap Inbound, Data Bin Reject, Master Produk, Mapping RFID, Pencarian, Tracking Movement, Peminjaman/Bazar, Outbound)</option>
                 <option value="admin">Admin</option>
                 <option value="dashboard">Dashboard saja</option>
                 <option value="search">Pencarian saja</option>
@@ -2142,16 +2143,23 @@ const USERS_LS_KEY = "wms_users_v1";
 function curUser_(){ try{ return JSON.parse(sessionStorage.getItem("wms_user") || "null"); }catch(e){ return null; } }
 function curBy_(){ const u = curUser_(); return (u && u.name) ? u.name : ""; }
 // AKUN TERTANAM: akun di daftar ini otomatis ada di SETIAP perangkat yang membuka file ini.
-// Format: { name: "Budi", hash: "<sha256>", pw: "password", role: "operator" }   (role: admin / operator / outbound / dashboard / search)
+// Format: { name: "Budi", hash: "<sha256>", pw: "password", role: "operator" }   (role: admin / operator / outbound / rika / dashboard / search)
 // "pw" ditulis agar admin bisa melihat password saat ini di menu Kelola User. Artinya siapa pun yang membuka
 // source file ini bisa membacanya. Untuk menambah/mengubah akun tertanam secara permanen, edit daftar ini.
 const SEED_USERS = [
   /*SEED_USERS_BEGIN*/
-  { name: "Indra", hash: "ed02f388ce4125b8e35f9d79a4fba9150a68f742b17256f3e10152d87b38f140", pw: "surya1212", role: "operator" },
-  { name: "Outbound", hash: "526df9cdae29912d6c17a36b236947ba933fd434bce6e45a1614fc371c45ab89", pw: "34tQDP6G", role: "outbound" },
+  { name: "Indra", hash: "68d144c0f3d7cd36a69bdb8d6e8b1989d807506ad05c2703514053e3608b8e2b", pw: "suryageblek", role: "operator" },
+  { name: "Outbound", hash: "d51832dd4b6b229e3a939abcd13717e14c82eae03986393ba7725a4f86fd037f", pw: "teamoutbound", role: "outbound" },
+  { name: "Rika", hash: "f757e9a52515813a68ad716945c0bc1624aa23f97d658dbe5f75fcfe0eedee2e", pw: "rikayuks", role: "rika" },
   { name: "admin", hash: "821bae8ac928b9568087361322a0185847944bb1663c4d7eb0fa532ec974e88f", role: "admin" },
   /*SEED_USERS_END*/
 ];
+/* Versi file: bila akun tertanam (SEED_USERS) diubah di file/GitHub (password atau peran), nilai di file otomatis
+   MENANG atas ubahan lama di browser/cloud, lalu disalin ke Supabase (lihat applySeedFileUpdates_) supaya berlaku di semua komputer.
+   Ubahan password lewat menu Kelola User sesudahnya tetap berlaku seperti biasa. */
+const SEED_FP_KEY_ = "wms_seedfp_v1";
+function seedFpMap_(){ try{ const x = JSON.parse(localStorage.getItem(SEED_FP_KEY_) || "{}"); return (x && typeof x === "object") ? x : {}; }catch(e){ return {}; } }
+function seedFp_(sd){ return sha256Hex_("seedfp|" + String(sd.name).toLowerCase() + "|" + sd.hash + "|" + (sd.pw || "") + "|" + sd.role); }
 function getUsers_(){
   let local = [];
   try{ const x = JSON.parse(localStorage.getItem(USERS_LS_KEY) || "[]"); if(Array.isArray(x)) local = x; }catch(e){}
@@ -2161,7 +2169,8 @@ function getUsers_(){
   SEED_USERS.forEach(sd => {
     const key = String(sd.name).toLowerCase();
     if(gone.has(key)) return;
-    const ov = byName.get(key);
+    const rawOv = byName.get(key), fpm_ = seedFpMap_();
+    const ov = (rawOv && fpm_[key] === seedFp_(sd)) ? rawOv : null; // file diubah sejak ubahan itu dibuat -> nilai file menang
     // Password yang diubah admin di perangkat ini menang atas password dari file (hanya di perangkat ini).
     out.push(Object.assign({}, sd, ov ? { hash: ov.hash, pw: ov.pw, ov: true } : {}, { seed: true }));
     byName.delete(key);
@@ -2174,6 +2183,7 @@ function saveUsers_(a){
   const present = new Set(a.map(u => String(u.name).toLowerCase()));
   SEED_USERS.forEach(sd => { if(!present.has(String(sd.name).toLowerCase())) store.push({ name: sd.name, hash: "deleted", role: "deleted", deleted: true }); });
   localStorage.setItem(USERS_LS_KEY, JSON.stringify(store));
+  { const fpm = seedFpMap_(); let ch = false; a.forEach(u => { if(u.seed && u.ov){ const sd = SEED_USERS.find(x => String(x.name).toLowerCase() === String(u.name).toLowerCase()); if(sd){ const k = String(sd.name).toLowerCase(), f = seedFp_(sd); if(fpm[k] !== f){ fpm[k] = f; ch = true; } } } }); if(ch) localStorage.setItem(SEED_FP_KEY_, JSON.stringify(fpm)); }
   pushUsersDiff_(store); // kirim perubahan akun ke cloud supaya semua komputer ikut berubah
 }
 
@@ -2189,7 +2199,7 @@ const PDG_PREFIX_ = "pdg|"; // data Pendingan (disinkron lewat tabel masterbin, 
 const POA_PREFIX_ = "poa|"; // data PO asli + penggabungan model (Rekap Inbound), disinkron lewat tabel masterbin
 const isSysKey_ = k => String(k).startsWith(USR_PREFIX_) || String(k).startsWith(PDG_PREFIX_) || String(k).startsWith(POA_PREFIX_);
 const USR_MIG_KEY_ = "wms_users_cloud_migrated_v1";
-const USR_ROLES_ = { admin:1, operator:1, outbound:1, dashboard:1, search:1 };
+const USR_ROLES_ = { admin:1, operator:1, outbound:1, rika:1, dashboard:1, search:1 };
 function usrKey_(name){ return USR_PREFIX_ + String(name).trim().toLowerCase(); }
 function usrToRow_(u){ if(u.deleted) return { id: usrKey_(u.name), name: String(u.name), hash: "deleted", pw: "", role: "deleted", created: "" }; return { id: usrKey_(u.name), name: String(u.name), hash: String(u.hash), pw: u.pw ? String(u.pw) : "", role: u.role, created: u.created || "" }; }
 function usrRowValid_(r){ return r && typeof r.name === "string" && r.name.length > 0 && r.name.length <= 30 && /^[0-9a-f]{64}$/.test(String(r.hash)) && USR_ROLES_[r.role] === 1; }
@@ -2226,6 +2236,17 @@ async function reloadUsersFromIDB_(){
   all.forEach(r => { if(r && r.role === "deleted" && typeof r.name === "string" && r.name) store.push({ name: r.name, hash: "deleted", role: "deleted", deleted: true }); });
   localStorage.setItem(USERS_LS_KEY, JSON.stringify(store));
 }
+// Akun tertanam yang isinya di file berbeda dari versi terakhir yang diterapkan: tulis nilai file ke cloud (Supabase) menimpa ubahan lama.
+async function applySeedFileUpdates_(){
+  const fpm = seedFpMap_(), items = [];
+  SEED_USERS.forEach(sd => { const k = String(sd.name).toLowerCase(), f = seedFp_(sd); if(fpm[k] !== f) items.push({ k, f, row: usrToRow_({ name: sd.name, hash: sd.hash, pw: sd.pw, role: sd.role, created: "" }) }); });
+  if(!items.length) return;
+  const put = items.map(x => x.row);
+  try{ await idbRawPutMany_("masterbin", put); await idbEnqueueSync("masterbin", "put", put.map(r => r.id), put); }
+  catch(e){ console.error("Gagal menerapkan akun dari file:", e); return; }
+  items.forEach(x => { fpm[x.k] = x.f; });
+  localStorage.setItem(SEED_FP_KEY_, JSON.stringify(fpm));
+}
 // Setelah tarikan cloud pertama berhasil: kirim akun lokal yang BELUM ada di cloud (hanya menambah, tidak menimpa), lalu muat ulang cache.
 async function syncUsersAfterPull_(){
   if(!idb) return;
@@ -2237,6 +2258,7 @@ async function syncUsersAfterPull_(){
     if(add.length){ await idbRawPutMany_("masterbin", add); await idbEnqueueSync("masterbin", "put", add.map(r => r.id), add); }
     localStorage.setItem(USR_MIG_KEY_, "1");
   }
+  await applySeedFileUpdates_();
   await reloadUsersFromIDB_();
 }
 
@@ -3435,7 +3457,7 @@ let currentActiveTab = "scan";
 function switchTab(activeId) {
   currentActiveTab = activeId;
   if (activeId === "allscan" || activeId === "bincl") {
-      if (!sessionStorage.getItem("admin_unlocked") && !(activeId === "bincl" && sessionStorage.getItem("wms_role") === "outbound")) {
+      if (!sessionStorage.getItem("admin_unlocked") && !(activeId === "bincl" && sessionStorage.getItem("wms_role") === "rika")) {
           const pass = prompt("Masukkan Password Administrator untuk mengakses Data Induk & Konfigurasi:");
           if (isAdminPw_(pass)) {
               sessionStorage.setItem("admin_unlocked", "true");
@@ -9921,7 +9943,7 @@ function planOutboundBulk_(items, stockRows, codeOf){
 })();
 
 /* ============ KELOLA USER (khusus Admin) ============ */
-const USER_ROLE_LABEL_ = { admin: "Admin", operator: "Operator", outbound: "Tim Outbound", dashboard: "Dashboard saja", search: "Pencarian saja" };
+const USER_ROLE_LABEL_ = { admin: "Admin", operator: "Operator", outbound: "Tim Outbound", rika: "RIKA", dashboard: "Dashboard saja", search: "Pencarian saja" };
 function isAdminNow_(){ return sessionStorage.getItem("wms_role") === "admin"; }
 
 let usrShowPw_ = false;
@@ -10019,7 +10041,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       const list = getUsers_();
       let added = 0, updated = 0;
       incoming.forEach(u => {
-        if(!u || !u.name || !u.hash || !(u.role in { admin:1, operator:1, outbound:1, dashboard:1, search:1 })) return;
+        if(!u || !u.name || !u.hash || !(u.role in { admin:1, operator:1, outbound:1, rika:1, dashboard:1, search:1 })) return;
         const i = list.findIndex(x => String(x.name).toLowerCase() === String(u.name).toLowerCase());
         const nm = i >= 0 ? list[i].name : String(u.name);
         const pwI = u.pw ? String(u.pw) : undefined;
@@ -10259,11 +10281,12 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
   const ROLE_TABS = {
     admin: null,
     operator: ["scan","outbound","cyclecount","opname","transferbin","transfergudang","search","movement","poinbound","historycctf","discrepancy","pendingan","pinjam","qrcode"],
-    outbound: ["outbound","bincl","search"], // Tim Outbound: Outbound (wajib RFID bila stok di lokasi ber-RFID) + Data Bin Reject (tanpa tombol Kembalikan) + Pencarian Barang
+    outbound: ["outbound","search","movement","pinjam"], // Tim Outbound: Pencarian Barang, Tracking Movement, Peminjaman/Bazar, Outbound (Keluar)
+    rika: ["scan","poinbound","bincl","master","rfidmap","search","movement","pinjam","outbound"], // RIKA: Inbound/Retur, Rekap Inbound, Data Bin Reject, Master Produk, Mapping RFID, Pencarian, Tracking Movement, Peminjaman/Bazar, Outbound
     dashboard: ["dashboardreport"],
     search: ["search"]
   };
-  const ROLE_LABEL = { admin: "ADMIN", operator: "OPERATOR", outbound: "OUTBOUND", dashboard: "DASHBOARD", search: "PENCARIAN" };
+  const ROLE_LABEL = { admin: "ADMIN", operator: "OPERATOR", outbound: "OUTBOUND", rika: "RIKA", dashboard: "DASHBOARD", search: "PENCARIAN" };
   const gate = document.getElementById("loginGate");
   const getRole = () => sessionStorage.getItem("wms_role") || "";
   const allows = (id) => { const r = getRole(); if(!(r in ROLE_TABS)) return false; const a = ROLE_TABS[r]; return a === null || a.includes(id); };
@@ -10305,7 +10328,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       if(n2){ n2.classList.remove("locked"); n2.innerHTML = "🏷️ Data Bin Reject (Unlocked)"; }
     } else {
       sessionStorage.removeItem("admin_unlocked");
-      if(role === "outbound"){ const n2 = document.getElementById("navBinCL"); if(n2){ n2.classList.remove("locked"); n2.innerHTML = "🏷️ Data Bin Reject (Unlocked)"; } }
+      if(role === "rika"){ const n2 = document.getElementById("navBinCL"); if(n2){ n2.classList.remove("locked"); n2.innerHTML = "🏷️ Data Bin Reject (Unlocked)"; } }
     }
     gate.style.display = "none";
     origSwitch(admin ? "scan" : a[0]);
