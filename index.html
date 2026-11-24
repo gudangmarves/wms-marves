@@ -1549,6 +1549,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
 
             </div>
             <div class="ma-chips" role="group" aria-label="Tampilan">
+              <button class="ma-chip" id="pdViewBin" title="Satu baris = satu bin, berisi semua SKU yang harus diambil di bin itu">Per Lokasi</button>
               <button class="ma-chip" id="pdViewSku">Per SKU</button>
               <button class="ma-chip on" id="pdViewRow">Per Pesanan</button>
             </div>
@@ -10689,6 +10690,36 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     $("pdInfo").innerHTML = `<b>${list.length}</b> pesanan · <b>${totalQty}</b> pcs`;
     if (!list.length){ head.innerHTML = ""; body.innerHTML = `<tr><td class="hint" style="text-align:center; padding:24px;">Tidak ada data pada filter ini.</td></tr>`; return; }
     const hasOrd = rows.some(r => r.ord);
+    if (view === "bin"){
+      // Per LOKASI: satu baris = satu bin; isinya semua SKU yang harus diambil di bin itu.
+      // Alokasi stok & bin dihitung atas SEMUA pesanan (batas kirim terdekat dulu), lalu ditampilkan sesuai filter channel/pencarian.
+      const info = computeAlloc(stock), g = {}, kur = {};
+      const nat = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+      list.forEach(r => {
+        const f = info.get(r) || { t: 0, arr: [] }, d = deadline(r), k = r.sku.toUpperCase();
+        f.arr.forEach(([bin, u, bsr]) => {
+          const o = g[bin] = g[bin] || { bin, besar: !!bsr, skus: {}, qty: 0, ords: new Set(), due: null };
+          const sk = o.skus[k] = o.skus[k] || { sku: r.sku, nama: nameOf(stock, r.sku, r), qty: 0 };
+          sk.qty += u; o.qty += u; o.ords.add(r.ord || "(tanpa no)");
+          if (d != null && (o.due == null || d < o.due)) o.due = d;
+        });
+        const kk = r.qty - f.t;
+        if (kk > 0){ const o = kur[k] = kur[k] || { sku: r.sku, nama: nameOf(stock, r.sku, r), qty: 0 }; o.qty += kk; }
+      });
+      const bins = Object.values(g).sort((a, b) => (a.besar ? 1 : 0) - (b.besar ? 1 : 0) || nat(a.bin, b.bin));
+      const kurList = Object.values(kur).sort((a, b) => nat(a.sku, b.sku));
+      const totPick = bins.reduce((a, o) => a + o.qty, 0), totKur = kurList.reduce((a, o) => a + o.qty, 0);
+      $("pdInfo").innerHTML = `<b>${bins.length}</b> lokasi · <b>${totPick}</b> pcs siap ambil` + (totKur ? ` · <span style="color:var(--danger); font-weight:700;">${totKur} pcs belum ada stok</span>` : "");
+      head.innerHTML = `<tr><th>Lokasi Bin</th><th>SKU yang diambil di bin ini</th><th style="text-align:center;">Jml SKU</th><th style="text-align:center;">Total Qty</th><th style="text-align:center;">Pesanan</th><th>Batas Kirim Terdekat</th></tr>`;
+      let html = bins.map(o => {
+        const sk = Object.values(o.skus).sort((a, b) => nat(a.sku, b.sku));
+        const items = sk.map(x => `<div style="padding:2px 0;"><b style="font-family:var(--font-mono);">${escUid_(x.sku)}</b> ${escUid_(x.nama || "")} <b style="color:var(--accent); font-size:15px;">×${x.qty}</b></div>`).join("");
+        return `<tr><td style="font-family:var(--font-mono); font-size:17px; font-weight:800; white-space:nowrap; color:${o.besar ? "var(--warning, #d29922)" : "var(--accent)"};">📍 ${escUid_(o.bin)}${o.besar ? `<div style="font-size:10px; font-weight:700;">⚠ Gudang Besar: transfer dulu</div>` : ""}</td><td>${items}</td><td style="text-align:center; font-weight:700;">${sk.length}</td><td style="text-align:center; font-size:17px; font-weight:800;">${o.qty}</td><td style="text-align:center;" title="${escUid_([...o.ords].join(", "))}">${o.ords.size}</td><td>${dueBadge(o.due)}</td></tr>`;
+      }).join("");
+      if (kurList.length) html += `<tr style="background:rgba(248,81,73,.10);"><td style="font-weight:800; color:var(--danger); white-space:nowrap;">⛔ Belum ada stok</td><td colspan="5">${kurList.map(x => `<div style="padding:2px 0;"><b style="font-family:var(--font-mono);">${escUid_(x.sku)}</b> ${escUid_(x.nama || "")} <b style="color:var(--danger);">kurang ${x.qty}</b></div>`).join("")}</td></tr>`;
+      body.innerHTML = html || `<tr><td colspan="6" class="hint" style="text-align:center; padding:24px;">Tidak ada barang yang siap diambil pada filter ini.</td></tr>`;
+      return;
+    }
     if (view === "row"){
       // Per PESANAN: satu baris = satu nomor pesanan (isi SKU-nya digabung). Stok dibagi mulai dari batas kirim paling dekat.
       const q = ($("pdSearch").value || "").toLowerCase().trim(), og = {}, alok = new Map(), left = {}, loc = new Map(), pick = mkBinPicker(stock);
@@ -10790,8 +10821,10 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
 
   function setChip(ids, on){ ids.forEach(i => $(i).classList.toggle("on", i === on)); }
   $("pdChips").addEventListener("click", e => { const b = e.target.closest("[data-chan]"); if (!b) return; chan = b.dataset.chan; render(); });
-  $("pdViewSku").onclick = () => { view = "sku"; setChip(["pdViewSku","pdViewRow"], "pdViewSku"); render(); };
-  $("pdViewRow").onclick = () => { view = "row"; setChip(["pdViewSku","pdViewRow"], "pdViewRow"); render(); };
+  const VIEW_IDS = ["pdViewBin","pdViewSku","pdViewRow"];
+  $("pdViewBin").onclick = () => { view = "bin"; setChip(VIEW_IDS, "pdViewBin"); render(); };
+  $("pdViewSku").onclick = () => { view = "sku"; setChip(VIEW_IDS, "pdViewSku"); render(); };
+  $("pdViewRow").onclick = () => { view = "row"; setChip(VIEW_IDS, "pdViewRow"); render(); };
   $("pdSearch").addEventListener("input", render);
 
   // ---- Selesai: barang sudah di-outbound -> hilang dari pendingan ----
