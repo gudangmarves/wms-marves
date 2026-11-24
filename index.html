@@ -1423,7 +1423,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
             <div class="toolbar-spacer"></div>
             <span class="toolbar-count">Log: <b id="statMoveQty">0</b></span>
             <button class="btn btn-ghost btn-sm" id="btnExportMovements" title="Export hasil sesuai filter yang aktif (kosongkan filter untuk export semua data)">⬇️ Export</button>
-            <button class="btn btn-ghost btn-sm" id="btnCleanMovements" title="Khusus Admin: hapus bersih log sampah (SKU {RFID_CODE:...} dan SKU tanpa nama yang tidak ada di Master) di Lokal & Supabase">🧹 Bersihkan</button>
+            <button class="btn btn-ghost btn-sm" id="btnCleanMovements" title="Khusus Admin: hapus bersih log sampah (SKU {RFID_CODE:...}, SKU tanpa nama yang tidak ada di Master, dan log bertipe DELETE — ikut filter bila terisi) di Lokal & Supabase">🧹 Bersihkan</button>
             <button class="btn btn-danger btn-sm" id="btnDeleteDocData" title="Hapus SEMUA data satu No. Dokumen (stok, Data Bin Reject, log Inbound/Outbound/Transfer unit-nya) di Lokal & Cloud — khusus Admin, ada backup otomatis">🗑️ Hapus Dokumen</button>
             <button class="btn btn-danger btn-sm" id="btnClearMovements" title="Bersihkan log TRANSFER saja (Inbound/Outbound/Sales/Retur/Delete tetap disimpan)">🗑️ Transfer</button>
             <button class="btn btn-danger btn-sm" id="btnClearMovementsAll" title="Hapus SEMUA Movement Log — Lokal &amp; Cloud (Google Sheets)">🗑️ Semua (Cloud)</button>
@@ -5665,10 +5665,21 @@ window.deleteMasterRow = async function(id) {
     const rows = await idbGetAllScans();
     const target = rows.find(r=>String(r.id) === stringId);
     
-    await idbDeleteScan(stringId);
-    if (target) await recordMovement(stringId, "DELETE", target.sku, target.nama, target.bin, "Manual Hapus Data Induk", "", target.uid);
+    // HAPUS BERSIH: baris stok + SEMUA log pergerakan unit ini dihapus di Lokal DAN Supabase,
+    // dan tidak meninggalkan log "DELETE" baru.
+    const mvAll = (await idbGetAllMovements()).filter(Boolean);
+    const mvIds = mvAll.filter(m => String(m.ref_id || "") === stringId).map(m => m.id);
+    await idbRawDeleteMany_("scanlog", [stringId]);
+    await idbEnqueueSync("scanlog", "del", [stringId]);
+    if (mvIds.length) {
+      await idbRawDeleteMany_("movementlog", mvIds);
+      await idbEnqueueSync("movementlog", "del", mvIds);
+    }
+    try { invalidateUidIndex(); } catch(e) {}
+    try { allScanCache = null; } catch(e) {}
     await loadAllScan();
-    toast("✓ Data terhapus", "good");
+    try { flushSyncQueue(); } catch(e) {}
+    toast("✓ Data terhapus bersih (stok + " + mvIds.length + " log, Lokal & Supabase)", "good");
   } catch(err) {
     console.error(err);
     toast("Gagal menghapus", "bad");
@@ -9021,10 +9032,17 @@ async function cleanMovementJunk_(){
   const idA = new Set(mvA.map(m => m.id));
   const mvB = hasMaster ? mv.filter(m => m && !idA.has(m.id) && up(m.sku) !== "" && up(m.sku) !== "-" && blankName(m.nama) && !masterSet.has(up(m.sku))) : [];
   const scA = sc.filter(r => r && isCode(r.sku));
-  const mvDel = mvA.concat(mvB);
+  // Kriteria C: semua log bertipe DELETE (mis. "Manual Hapus Data Induk"). Bila kolom pencarian/tanggal terisi, hanya yang cocok filter.
+  const fq = document.getElementById("moveSearchSku").value, fs = document.getElementById("moveStartDate").value, fe = document.getElementById("moveEndDate").value;
+  const filtered = !!(String(fq).trim() || fs || fe);
+  const idFilt = new Set((await getMovementFilteredRows_(fq, fs, fe)).rows.map(m => m.id));
+  const doneIds = new Set(mvA.concat(mvB).map(m => m.id));
+  const mvC = mv.filter(m => m && m.type === "DELETE" && !doneIds.has(m.id) && (!filtered || idFilt.has(m.id)));
+  const mvDel = mvA.concat(mvB, mvC);
   if(!mvDel.length && !scA.length){ toast("Tidak ada log sampah yang ditemukan di komputer ini." + (hasMaster ? "" : " (Master belum termuat di sini, kriteria B dilewati)"), "good"); return; }
   const sample = Array.from(new Set(mvDel.map(m => String(m.sku)).concat(scA.map(r => String(r.sku))))).slice(0, 6).join("\n  ");
   const info = `BERSIHKAN LOG SAMPAH\n\nA. SKU {RFID_CODE:...}: ${mvA.length} log Tracking + ${scA.length} baris stok\nB. Tanpa nama & SKU tidak ada di Master: ${mvB.length} log Tracking` + (hasMaster ? "" : " (DILEWATI: Master belum termuat di komputer ini)")
+    + `\nC. Log bertipe DELETE${filtered ? " (sesuai filter yang sedang aktif)" : " (semua)"}: ${mvC.length} log`
     + `\n\nContoh SKU:\n  ${sample}\n\nDihapus di Lokal DAN Supabase. Backup JSON diunduh otomatis.`;
   if(!confirm(info + "\n\nLanjutkan?")) return;
   const pass = prompt("Masukkan Password Administrator untuk menghapus log sampah:");
@@ -9041,7 +9059,10 @@ async function cleanMovementJunk_(){
   const mvIds = mvDel.map(m => m.id), scIds = scA.map(r => r.id);
   if(mvIds.length){ await idbRawDeleteMany_("movementlog", mvIds); await idbEnqueueSync("movementlog", "del", mvIds); }
   if(scIds.length){ await idbRawDeleteMany_("scanlog", scIds); await idbEnqueueSync("scanlog", "del", scIds); }
-  toast(`✓ ${mvIds.length} log & ${scIds.length} baris stok dihapus (Lokal + antrean ke Supabase).`, "good");
+  try{ invalidateUidIndex(); }catch(e){}
+  try{ allScanCache = null; }catch(e){}
+  try{ flushSyncQueue(); }catch(e){}
+  toast(`✓ ${mvIds.length} log & ${scIds.length} baris stok dihapus bersih (Lokal + Supabase).`, "good");
   try{ loadMovements(document.getElementById("moveSearchSku").value, document.getElementById("moveStartDate").value, document.getElementById("moveEndDate").value); }catch(e){}
 }
 document.getElementById("btnCleanMovements").onclick = () => { cleanMovementJunk_().catch(err => { console.error(err); toast("Gagal membersihkan log: " + err.message, "bad"); }); };
