@@ -1984,6 +1984,7 @@ section[id^="tab-"]:not(.hidden){animation:tabIn .22s var(--ease)}
               <select id="usrRole" class="input-sm" style="min-width:150px;">
                 <option value="operator">Operator (gudang)</option>
                 <option value="outbound">Tim Outbound (Pencarian + Tracking Movement + Peminjaman/Bazar + Outbound)</option>
+                <option value="indra">INDRA (Inbound/Retur, Outbound, Stock Opname, Transfer Bin, Transfer Gudang, Pencarian, Tracking Movement, History CC &amp; Transfer, Rekap Inbound, Pendingan, Master Produk, Mapping RFID)</option>
                 <option value="rika">RIKA (Inbound/Retur, Rekap Inbound, Data Bin Reject, Master Produk, Mapping RFID, Pencarian, Tracking Movement, Peminjaman/Bazar, Outbound)</option>
                 <option value="admin">Admin</option>
                 <option value="dashboard">Dashboard saja</option>
@@ -2143,12 +2144,12 @@ const USERS_LS_KEY = "wms_users_v1";
 function curUser_(){ try{ return JSON.parse(sessionStorage.getItem("wms_user") || "null"); }catch(e){ return null; } }
 function curBy_(){ const u = curUser_(); return (u && u.name) ? u.name : ""; }
 // AKUN TERTANAM: akun di daftar ini otomatis ada di SETIAP perangkat yang membuka file ini.
-// Format: { name: "Budi", hash: "<sha256>", pw: "password", role: "operator" }   (role: admin / operator / outbound / rika / dashboard / search)
+// Format: { name: "Budi", hash: "<sha256>", pw: "password", role: "operator" }   (role: admin / operator / outbound / indra / rika / dashboard / search)
 // "pw" ditulis agar admin bisa melihat password saat ini di menu Kelola User. Artinya siapa pun yang membuka
 // source file ini bisa membacanya. Untuk menambah/mengubah akun tertanam secara permanen, edit daftar ini.
 const SEED_USERS = [
   /*SEED_USERS_BEGIN*/
-  { name: "Indra", hash: "68d144c0f3d7cd36a69bdb8d6e8b1989d807506ad05c2703514053e3608b8e2b", pw: "suryageblek", role: "operator" },
+  { name: "Indra", hash: "68d144c0f3d7cd36a69bdb8d6e8b1989d807506ad05c2703514053e3608b8e2b", pw: "suryageblek", role: "indra" },
   { name: "Outbound", hash: "d51832dd4b6b229e3a939abcd13717e14c82eae03986393ba7725a4f86fd037f", pw: "teamoutbound", role: "outbound" },
   { name: "Rika", hash: "f757e9a52515813a68ad716945c0bc1624aa23f97d658dbe5f75fcfe0eedee2e", pw: "rikayuks", role: "rika" },
   { name: "admin", hash: "821bae8ac928b9568087361322a0185847944bb1663c4d7eb0fa532ec974e88f", role: "admin" },
@@ -2199,7 +2200,7 @@ const PDG_PREFIX_ = "pdg|"; // data Pendingan (disinkron lewat tabel masterbin, 
 const POA_PREFIX_ = "poa|"; // data PO asli + penggabungan model (Rekap Inbound), disinkron lewat tabel masterbin
 const isSysKey_ = k => String(k).startsWith(USR_PREFIX_) || String(k).startsWith(PDG_PREFIX_) || String(k).startsWith(POA_PREFIX_);
 const USR_MIG_KEY_ = "wms_users_cloud_migrated_v1";
-const USR_ROLES_ = { admin:1, operator:1, outbound:1, rika:1, dashboard:1, search:1 };
+const USR_ROLES_ = { admin:1, operator:1, outbound:1, indra:1, rika:1, dashboard:1, search:1 };
 function usrKey_(name){ return USR_PREFIX_ + String(name).trim().toLowerCase(); }
 function usrToRow_(u){ if(u.deleted) return { id: usrKey_(u.name), name: String(u.name), hash: "deleted", pw: "", role: "deleted", created: "" }; return { id: usrKey_(u.name), name: String(u.name), hash: String(u.hash), pw: u.pw ? String(u.pw) : "", role: u.role, created: u.created || "" }; }
 function usrRowValid_(r){ return r && typeof r.name === "string" && r.name.length > 0 && r.name.length <= 30 && /^[0-9a-f]{64}$/.test(String(r.hash)) && USR_ROLES_[r.role] === 1; }
@@ -9943,7 +9944,7 @@ function planOutboundBulk_(items, stockRows, codeOf){
 })();
 
 /* ============ KELOLA USER (khusus Admin) ============ */
-const USER_ROLE_LABEL_ = { admin: "Admin", operator: "Operator", outbound: "Tim Outbound", rika: "RIKA", dashboard: "Dashboard saja", search: "Pencarian saja" };
+const USER_ROLE_LABEL_ = { admin: "Admin", operator: "Operator", outbound: "Tim Outbound", indra: "INDRA", rika: "RIKA", dashboard: "Dashboard saja", search: "Pencarian saja" };
 function isAdminNow_(){ return sessionStorage.getItem("wms_role") === "admin"; }
 
 let usrShowPw_ = false;
@@ -10041,7 +10042,7 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
       const list = getUsers_();
       let added = 0, updated = 0;
       incoming.forEach(u => {
-        if(!u || !u.name || !u.hash || !(u.role in { admin:1, operator:1, outbound:1, rika:1, dashboard:1, search:1 })) return;
+        if(!u || !u.name || !u.hash || !(u.role in { admin:1, operator:1, outbound:1, indra:1, rika:1, dashboard:1, search:1 })) return;
         const i = list.findIndex(x => String(x.name).toLowerCase() === String(u.name).toLowerCase());
         const nm = i >= 0 ? list[i].name : String(u.name);
         const pwI = u.pw ? String(u.pw) : undefined;
@@ -10282,11 +10283,12 @@ document.getElementById("usrImport").addEventListener("change", (e) => {
     admin: null,
     operator: ["scan","outbound","cyclecount","opname","transferbin","transfergudang","search","movement","poinbound","historycctf","discrepancy","pendingan","pinjam","qrcode"],
     outbound: ["outbound","search","movement","pinjam"], // Tim Outbound: Pencarian Barang, Tracking Movement, Peminjaman/Bazar, Outbound (Keluar)
+    indra: ["scan","outbound","opname","transferbin","transfergudang","search","movement","historycctf","poinbound","pendingan","master","rfidmap"], // INDRA: Inbound/Retur, Outbound, Stock Opname Harian, Transfer Bin, Transfer Gudang, Pencarian, Tracking Movement, History CC & Transfer, Rekap Inbound, Pendingan, Master Produk, Mapping RFID
     rika: ["scan","poinbound","bincl","master","rfidmap","search","movement","pinjam","outbound"], // RIKA: Inbound/Retur, Rekap Inbound, Data Bin Reject, Master Produk, Mapping RFID, Pencarian, Tracking Movement, Peminjaman/Bazar, Outbound
     dashboard: ["dashboardreport"],
     search: ["search"]
   };
-  const ROLE_LABEL = { admin: "ADMIN", operator: "OPERATOR", outbound: "OUTBOUND", rika: "RIKA", dashboard: "DASHBOARD", search: "PENCARIAN" };
+  const ROLE_LABEL = { admin: "ADMIN", operator: "OPERATOR", outbound: "OUTBOUND", indra: "INDRA", rika: "RIKA", dashboard: "DASHBOARD", search: "PENCARIAN" };
   const gate = document.getElementById("loginGate");
   const getRole = () => sessionStorage.getItem("wms_role") || "";
   const allows = (id) => { const r = getRole(); if(!(r in ROLE_TABS)) return false; const a = ROLE_TABS[r]; return a === null || a.includes(id); };
